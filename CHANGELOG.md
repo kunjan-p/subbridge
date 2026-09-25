@@ -4,6 +4,10 @@ All notable changes to SubBridge are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Changed
+
+- The package description now says what SubBridge does, and the package lists search keywords.
+
 ## [0.1.0a1]
 
 First public alpha.
