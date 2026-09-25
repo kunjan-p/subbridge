@@ -5,7 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "subbridge"
 version = "0.1.0a1"
-description = "Python wrappers for locally authenticated coding assistant CLIs"
+description = "Call Claude Code and Codex from Python through your signed-in CLI subscription, no API key"
+keywords = ["claude", "claude-code", "codex", "anthropic", "openai", "llm", "ai-agents", "cli-wrapper", "subscription", "asyncio"]
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
