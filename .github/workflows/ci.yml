@@ -19,8 +19,8 @@ jobs:
       # Lint, build and aislop run once, on the newest Python.
       LINT: ${{ matrix.python-version == '3.14' }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install build -e ".[dev]"
