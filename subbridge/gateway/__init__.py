@@ -50,10 +50,13 @@ class Gateway:
         if self._closed:
             return
         self._closed = True
-        # Stop any turn still running before removing its working directory,
-        # and before joining the serving thread waits on nothing else.
-        self._server.stop_in_flight_turns()
+        # Refuse any turn still queued for a slot before anything else, so
+        # one cannot start a CLI after stop_in_flight_turns() has already
+        # looked for turns to stop.
+        self._server.begin_closing()
         self._server.shutdown()
+        # Stop any turn still running before removing its working directory.
+        self._server.stop_in_flight_turns()
         self._server.server_close()
         self._thread.join()
         self._workdir.cleanup()

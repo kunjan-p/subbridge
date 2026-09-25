@@ -94,6 +94,31 @@ class KeyTests(GatewayTestCase):
         self.assertEqual(body["error"]["type"], "authentication_error")
         self.assertEqual(self.cli_calls("claude"), [])
 
+    def test_trickling_body_without_a_key_is_a_quick_401(self) -> None:
+        sock = socket.create_connection(("127.0.0.1", self.gateway.port), timeout=10)
+        self.addCleanup(sock.close)
+        sock.sendall(
+            b"POST /v1/messages HTTP/1.1\r\nHost: x\r\nContent-Length: 1000000\r\n\r\n"
+        )
+        sock.settimeout(0.05)
+        started = time.monotonic()
+        reply = b""
+        # Trickle the declared body in far slower than any single recv's
+        # timeout, so a reply that only bounds *each* recv (not the drain
+        # as a whole) would still hang here well past the assertion below.
+        while time.monotonic() - started < 6:
+            sock.sendall(b"a")
+            try:
+                reply = sock.recv(4096)
+                if reply:
+                    break
+            except TimeoutError:
+                pass
+            time.sleep(0.3)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertIn(b"401", reply)
+        self.assertEqual(self.cli_calls("claude"), [])
+
 
 class BodyTests(GatewayTestCase):
     def test_malformed_json_is_400(self) -> None:
@@ -317,6 +342,72 @@ class CloseDuringTurnTests(unittest.TestCase):
 
                 worker.join(timeout=5)
                 self.assertFalse(worker.is_alive())
+
+    def test_close_refuses_a_queued_turn_instead_of_starting_it(self) -> None:
+        with TemporaryDirectory() as tempdir:
+            bin_dir = Path(tempdir)
+            pid_file = bin_dir / "claude.pid"
+            _fake_claude_that_stalls(bin_dir, pid_file, sleep_seconds=20)
+            path = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+            with mock.patch.dict(os.environ, {"PATH": path}):
+                gateway = subbridge.serve(max_concurrency=1)
+                self.addCleanup(gateway.close)  # close() is idempotent
+                client = anthropic.Anthropic(
+                    base_url=gateway.anthropic_base_url,
+                    api_key=gateway.api_key,
+                    max_retries=0,
+                )
+                statuses: list[int] = []
+
+                def ask(content: str) -> None:
+                    try:
+                        client.messages.create(
+                            model="sonnet",
+                            max_tokens=10,
+                            messages=[{"role": "user", "content": content}],
+                        )
+                        statuses.append(200)
+                    except anthropic.APIStatusError as exc:
+                        statuses.append(exc.status_code)
+
+                first = threading.Thread(target=ask, args=("first",))
+                first.start()
+                deadline = time.monotonic() + 5
+                while not pid_file.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(pid_file.exists(), "fake claude never started")
+                pid = int(pid_file.read_text())
+
+                # Queue a second turn behind the sole slot (max_concurrency=1)
+                # so it is blocked in cli_slot()'s slots.acquire() when
+                # close() runs -- the race close() must not lose.
+                second = threading.Thread(target=ask, args=("second",))
+                second.start()
+                time.sleep(0.3)
+
+                started = time.monotonic()
+                gateway.close()
+                self.assertLess(time.monotonic() - started, 5)
+
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(0.05)
+                else:
+                    self.fail(f"fake claude (pid {pid}) is still running")
+
+                first.join(timeout=5)
+                second.join(timeout=5)
+                self.assertFalse(first.is_alive())
+                self.assertFalse(second.is_alive())
+                # The queued turn must have been refused, not started: the
+                # pid file still names only the first turn's process (a
+                # second CLI run would have overwritten it with a new pid).
+                self.assertIn(503, statuses)
+                self.assertEqual(int(pid_file.read_text()), pid)
 
 
 if __name__ == "__main__":

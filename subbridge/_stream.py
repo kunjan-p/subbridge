@@ -158,20 +158,27 @@ class EventStream:
             )
             # Exposed so another thread (the gateway's close(), stopping an
             # in-flight turn) can find and terminate this process tree
-            # without restructuring this generator-based transport.
-            threading.current_thread().subbridge_process = process
-            with SyncProcessIO(
-                process, prompt, self.timeout, SYNC_STREAM_LINE_LIMIT
-            ) as io:
-                while line := io.readline():
-                    if not line.strip():
-                        continue
-                    yield self._decode(line)
-                    if self.terminal:
-                        break
-                return_code = process.wait(timeout=io.remaining())
-            stderr.seek(0)
-            self._finish(return_code, stderr.read())
+            # without restructuring this generator-based transport. Cleared
+            # once this process is done with, so a reused thread (or a
+            # thread outside the gateway) never points at a reaped --
+            # possibly recycled -- PID.
+            this_thread = threading.current_thread()
+            this_thread.subbridge_process = process
+            try:
+                with SyncProcessIO(
+                    process, prompt, self.timeout, SYNC_STREAM_LINE_LIMIT
+                ) as io:
+                    while line := io.readline():
+                        if not line.strip():
+                            continue
+                        yield self._decode(line)
+                        if self.terminal:
+                            break
+                    return_code = process.wait(timeout=io.remaining())
+                stderr.seek(0)
+                self._finish(return_code, stderr.read())
+            finally:
+                this_thread.subbridge_process = None
 
     async def async_(self, prompt: str) -> AsyncGenerator[dict[str, Any], None]:
         with (

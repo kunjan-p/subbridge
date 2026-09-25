@@ -55,16 +55,33 @@ class GatewayServer(ThreadingHTTPServer):
         self.clients = {"claude": ClaudeClient(), "codex": CodexClient()}
         self._active_lock = threading.Lock()
         self._active_threads: set[threading.Thread] = set()
+        self._closing = False
 
     @contextmanager
     def cli_slot(self) -> Generator[None, None, None]:
-        """Hold one of the max_concurrency CLI slots, waiting up to the timeout."""
+        """Hold one of the max_concurrency CLI slots, waiting up to the timeout.
+
+        Registering in `_active_threads` happens in the same critical
+        section as the `_closing` check, so a turn that was queued on
+        `slots.acquire()` while `close()` started can never register (and
+        start a CLI) after `stop_in_flight_turns()` has already looked: it
+        either registered before `_closing` was set (and `close()`'s loop
+        will see and stop it) or it observes `_closing` here and never
+        starts at all.
+        """
         if not self.slots.acquire(timeout=self.turn_timeout):
             raise GatewayError(
                 503, f"Every CLI slot stayed busy for {self.turn_timeout} seconds."
             )
         thread = threading.current_thread()
         with self._active_lock:
+            if self._closing:
+                self.slots.release()
+                raise GatewayError(
+                    503,
+                    "The SubBridge gateway is shutting down.",
+                    code="gateway_closing",
+                )
             self._active_threads.add(thread)
         try:
             yield
@@ -90,33 +107,52 @@ class GatewayServer(ThreadingHTTPServer):
             return False
         return hmac.compare_digest(supplied.encode(), self.api_key.encode())
 
-    def stop_in_flight_turns(self) -> None:
-        """Kill the CLI process tree of every turn still running, then wait for
-        their request threads to notice and exit.
+    def begin_closing(self) -> None:
+        """Refuse any turn that has not yet registered a slot.
 
-        Each request thread records the CLI's `subprocess.Popen` on itself
-        (see `_stream.EventStream.sync`) as soon as it starts one, so this
-        does not need to restructure the generator-based CLI transport to
-        cancel it cooperatively. A turn's process may not have started yet
-        when this is called, so the search for it is retried for a short
-        grace period before giving up on that thread.
+        Must be called (and must complete) before `stop_in_flight_turns()`
+        starts looking for turns to stop: `cli_slot()` checks this flag and
+        registers in `_active_threads` in the same critical section, so once
+        this is set, no new thread can slip past `stop_in_flight_turns()`'s
+        loop and start a CLI of its own.
         """
         with self._active_lock:
-            threads = list(self._active_threads)
-        if not threads:
-            return
+            self._closing = True
+
+    def stop_in_flight_turns(self) -> None:
+        """Kill the CLI process tree of every turn still running, then wait
+        (bounded) until every request thread has noticed and exited.
+
+        This loops -- rather than acting on one snapshot -- because a turn
+        that read `_closing` as false (in `cli_slot()`) just before
+        `begin_closing()` set it can still appear in `_active_threads` after
+        this starts, and because a turn's `subprocess.Popen` (see
+        `_stream.EventStream.sync`) may not exist yet the first time this
+        looks. `begin_closing()` guarantees no *other* new turn joins
+        `_active_threads` after that point, so this loop is bounded to
+        turns that were already starting; it still has an overall deadline
+        so `close()` cannot hang.
+        """
         deadline = time.monotonic() + _STOP_GRACE_SECONDS
-        stopped: set[int] = set()
-        while time.monotonic() < deadline and len(stopped) < len(threads):
+        killed: set[int] = set()
+        while time.monotonic() < deadline:
+            with self._active_lock:
+                threads = list(self._active_threads)
+            if not threads:
+                return
             for thread in threads:
-                if id(thread) in stopped:
+                if id(thread) in killed:
                     continue
                 process = getattr(thread, "subbridge_process", None)
                 if process is not None:
                     terminate_process_tree(process)
-                    stopped.add(id(thread))
-            if len(stopped) < len(threads):
-                time.sleep(_STOP_POLL_SECONDS)
+                    killed.add(id(thread))
+            time.sleep(_STOP_POLL_SECONDS)
+        # The deadline passed (a straggler's process was never found, or
+        # never finished after being killed); join what's left with a short
+        # bound each so close() still returns promptly.
+        with self._active_lock:
+            threads = list(self._active_threads)
         for thread in threads:
             thread.join(timeout=_STOP_GRACE_SECONDS)
 
@@ -222,14 +258,24 @@ class GatewayHandler(BaseHTTPRequestHandler):
             self._send_error(style, error)
 
     def _drain_leftover_body(self) -> None:
-        """Read the body in 64 KB pieces for a bounded total time.
+        """Read the body in pieces of at most 64 KB for a bounded total time.
+
+        Uses `rfile.read1()`, not `rfile.read()`: `read()` loops internally,
+        issuing as many underlying `recv()` calls as it takes to fill the
+        requested size, and only *each* of those calls (not the loop as a
+        whole) honors the socket timeout -- a client trickling in a byte
+        every so often (below the per-call timeout each time) could still
+        hold this thread well past the intended budget. `read1()` makes at
+        most one `recv()` call (returning early with whatever that yields,
+        or from `rfile`'s own buffer first if anything is already sitting
+        there -- so nothing it already buffered while parsing the request
+        is lost), so the deadline below is re-checked between every network
+        read, not just every 64 KB.
 
         A caller that is actually sending its (possibly oversized) body
         drains fully well inside the budget on a local connection. A caller
-        that declared a huge body and then stalls or never sends it gets cut
-        off once the budget runs out, in one short read, rather than reading
-        in bounded 64 KB pieces up to the full declared length (which is how
-        a live attacker holds the socket open indefinitely).
+        that declared a huge body and then stalls, or trickles it in far
+        slower than that, gets cut off once the budget runs out.
         """
         try:
             remaining = self._declared_length() - self._consumed
@@ -245,7 +291,7 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 if budget <= 0:
                     break
                 self.connection.settimeout(budget)
-                chunk = self.rfile.read(min(remaining, _ERROR_DRAIN_CHUNK))
+                chunk = self.rfile.read1(min(remaining, _ERROR_DRAIN_CHUNK))
                 if not chunk:
                     break
                 remaining -= len(chunk)
