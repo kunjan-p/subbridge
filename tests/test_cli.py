@@ -1,8 +1,11 @@
 import io
 import json
 import os
+import signal
 import socket
+import subprocess
 import sys
+import time
 import tomllib
 import unittest
 from contextlib import redirect_stdout
@@ -42,6 +45,35 @@ class DispatchTests(unittest.TestCase):
         with redirect_stdout(output):
             self.assertEqual(cli.main([]), 2)
         self.assertIn("serve", output.getvalue())
+
+    def test_doctor_help_has_a_description(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaises(SystemExit):
+            cli.main(["doctor", "--help"])
+        self.assertIn(
+            "Check local provider CLI, login, model catalog, and plan/usage visibility.",
+            output.getvalue(),
+        )
+
+    def test_run_help_lists_exit_codes(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaises(SystemExit):
+            cli.main(["run", "--help"])
+        text = output.getvalue()
+        for phrase in ("128", "126", "127", "usage error"):
+            self.assertIn(phrase, text)
+
+
+class PortTests(unittest.TestCase):
+    def test_invalid_port_is_a_usage_error(self) -> None:
+        for value in ("-1", "70000", "not-a-number"):
+            with (
+                self.subTest(value=value),
+                mock.patch("sys.stderr", io.StringIO()),
+                self.assertRaises(SystemExit) as ctx,
+            ):
+                cli.main(["serve", "--port", value])
+            self.assertEqual(ctx.exception.code, 2)
 
 
 class ServeTests(unittest.TestCase):
@@ -106,6 +138,67 @@ class RunTests(unittest.TestCase):
         with mock.patch("sys.stderr", io.StringIO()) as stderr:
             self.assertEqual(cli.main(["run", "--", "subbridge-no-such-command"]), 127)
         self.assertIn("command not found", stderr.getvalue())
+
+    def test_run_reports_a_non_executable_command(self) -> None:
+        with TemporaryDirectory() as directory:
+            with mock.patch("sys.stderr", io.StringIO()) as stderr:
+                self.assertEqual(cli.main(["run", "--", directory]), 126)
+            self.assertIn("permission denied", stderr.getvalue())
+
+
+@unittest.skipUnless(os.name == "posix", "process groups and SIGTERM are POSIX-only")
+class SignalTests(unittest.TestCase):
+    """`subbridge run` must let its child handle Ctrl+C, not kill it (round 1 fix)."""
+
+    def spawn(self, child_code: str, *, new_session: bool = False) -> subprocess.Popen:
+        return subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "subbridge.cli",
+                "run",
+                "--",
+                sys.executable,
+                "-c",
+                child_code,
+            ],
+            start_new_session=new_session,
+        )
+
+    def test_run_lets_the_child_handle_sigint_and_returns_its_own_exit_code(
+        self,
+    ) -> None:
+        child_code = (
+            "import signal, sys, time\n"
+            "signal.signal(signal.SIGINT, lambda *_: None)\n"
+            "time.sleep(1)\n"
+            "sys.exit(5)\n"
+        )
+        proc = self.spawn(child_code, new_session=True)
+        try:
+            time.sleep(0.3)
+            os.killpg(proc.pid, signal.SIGINT)
+            self.assertEqual(proc.wait(timeout=10), 5)
+        finally:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+
+    def test_run_forwards_sigterm_to_the_child(self) -> None:
+        child_code = (
+            "import signal, sys, time\n"
+            "signal.signal(signal.SIGTERM, lambda *_: sys.exit(7))\n"
+            "time.sleep(10)\n"
+        )
+        proc = self.spawn(child_code)
+        try:
+            time.sleep(0.3)
+            proc.send_signal(signal.SIGTERM)
+            self.assertEqual(proc.wait(timeout=10), 7)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
 
 
 if __name__ == "__main__":
