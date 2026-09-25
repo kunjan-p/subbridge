@@ -1,0 +1,26 @@
+# Routine version updates, reviewed and merged by a maintainer.
+# Security updates are separate and arrive as soon as an advisory is published.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    # Skip releases younger than a week, so a bad or hijacked release has time to be caught.
+    cooldown:
+      default-days: 7
+    groups:
+      python-tooling:
+        patterns: ["*"]
+    open-pull-requests-limit: 2
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+    open-pull-requests-limit: 2
