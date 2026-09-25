@@ -6,6 +6,7 @@ import asyncio
 import json
 import subprocess
 import tempfile
+import threading
 import time
 from collections.abc import AsyncGenerator, Generator
 from contextlib import contextmanager
@@ -155,6 +156,10 @@ class EventStream:
                 cwd=self.cwd,
                 **process_group_options(),
             )
+            # Exposed so another thread (the gateway's close(), stopping an
+            # in-flight turn) can find and terminate this process tree
+            # without restructuring this generator-based transport.
+            threading.current_thread().subbridge_process = process
             with SyncProcessIO(
                 process, prompt, self.timeout, SYNC_STREAM_LINE_LIMIT
             ) as io:

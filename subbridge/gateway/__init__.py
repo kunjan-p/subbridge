@@ -50,6 +50,9 @@ class Gateway:
         if self._closed:
             return
         self._closed = True
+        # Stop any turn still running before removing its working directory,
+        # and before joining the serving thread waits on nothing else.
+        self._server.stop_in_flight_turns()
         self._server.shutdown()
         self._server.server_close()
         self._thread.join()
