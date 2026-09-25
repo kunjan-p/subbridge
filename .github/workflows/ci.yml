@@ -15,29 +15,27 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+    env:
+      # Lint, build and aislop run once, on the newest Python.
+      LINT: ${{ matrix.python-version == '3.14' }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - run: python -m pip install -e ".[dev]"
+      - run: python -m pip install build -e ".[dev]"
       - run: python -m pytest -q
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.14"
-      - uses: actions/setup-node@v7
+      - if: env.LINT == 'true'
+        run: |
+          ruff check .
+          ruff format --check .
+          python -m build
+      - if: env.LINT == 'true'
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
-      - run: python -m pip install build -e ".[dev]"
-      - run: ruff check .
-      - run: ruff format --check .
-      - run: python -m build
-      - name: aislop
+      - if: env.LINT == 'true'
+        name: aislop
         run: |
           set -o pipefail
           echo '```' >> "$GITHUB_STEP_SUMMARY"
