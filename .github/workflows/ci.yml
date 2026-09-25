@@ -30,6 +30,8 @@ jobs:
           ruff check .
           ruff format --check .
           python -m build
+          # The release workflow installs this lock file; catch bad pins or hashes here.
+          python -m pip download -q --only-binary=":all:" --require-hashes -r requirements-release.txt -d "$RUNNER_TEMP/release-deps"
       - if: env.LINT == 'true'
         uses: actions/setup-node@v7
         with:
