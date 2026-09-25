@@ -25,8 +25,11 @@ SubBridge's security promises are its defaults, so a way around any of them is i
 - A run escaping the Codex `read-only` sandbox or the Claude Code `read-only` mode (Read, Glob, and Grep only) that SubBridge requested.
 - Raw CLI status, events, or stderr appearing in results or error messages without the matching opt-in (`include_raw`, `include_events`, or `include_raw_diagnostics`).
 - A CLI process that keeps running after a timeout, error, or cancellation.
-- Input that makes SubBridge pass unintended flags or arguments to a CLI.
+- Input that makes SubBridge pass unintended flags or arguments to a CLI, including the `model` or message text of a gateway request.
+- The gateway (`subbridge serve`, `subbridge run`, `subbridge.serve()`) accepting connections on any address other than `127.0.0.1`, or sending CORS headers that let a web page read its replies.
+- A way to use the gateway without the key it generated, or to learn that key over the network.
+- A gateway request that starts a CLI (even its version or sign-in check) without a valid key.
 
-Hooks, plugins, and settings that you configured yourself run with your permissions by design, so code they run is not an escape from read-only mode.
+Hooks, plugins, and settings that you configured yourself run with your permissions by design, so code they run is not an escape from read-only mode. Likewise, software running as your own user can read the gateway key, for example from the environment of a `subbridge run` command, just as it can use your CLI sign-in; that is not a gateway vulnerability.
 
 Vulnerabilities in the `claude` or `codex` CLIs themselves belong with [Anthropic](https://www.anthropic.com/responsible-disclosure-policy) or [OpenAI](https://openai.com/security/disclosure/).

@@ -4,7 +4,13 @@ All notable changes to SubBridge are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+### Added
+
+- A local gateway for the official `anthropic` and `openai` Python SDKs, for prototyping on the subscription you already have and shipping with a real API key: `subbridge run -- <command>`, `subbridge serve`, and `subbridge.serve()`. It listens on `127.0.0.1` only, requires a key it generates at each start, and answers `POST /v1/messages` with Claude Code and `POST /v1/chat/completions` and `POST /v1/responses` with Codex, streaming included. Tools, images, and other unsupported parameters are rejected with a 400, and other endpoints with a 404. Tested with anthropic 1.8.0 and openai 3.19.2.
+
 ### Changed
+
+- `subbridge` is now a command with `doctor`, `serve`, and `run` subcommands. `subbridge doctor` and `subbridge doctor --json` work as before; `subbridge` alone prints help instead of running the doctor.
 
 - Claude Code now runs in a new `read-only` permission mode by default, replacing `plan`. The model gets only the Read, Glob, and Grep tools and no MCP servers, where plan mode still offered Bash, Edit, and MCP tools and often added remarks about planning to plain answers. Pass `permission_mode="plan"` for the old behavior.
 

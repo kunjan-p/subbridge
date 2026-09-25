@@ -26,6 +26,17 @@ Codex CLI 0.157.0 is installed on the test machine but has not completed a live 
 
 These are the exact versions that passed, not minimum requirements. Support for older and newer releases is best effort until they pass the opt-in live smoke tests. When a CLI command or its output format is incompatible, SubBridge raises a provider-specific error. It does not check which models an account can use.
 
+## Official SDKs used with the gateway
+
+The gateway implements the parts of the Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses APIs listed in the README, on top of the CLI contract above. It does not call the provider APIs. The unit suite drives it with these SDK versions, pinned in the `dev` extra, against fake CLIs on every Python version in CI:
+
+| SDK | Tested version | Calls covered |
+| --- | --- | --- |
+| `anthropic` | 1.8.0 | `messages.create`, `messages.create(stream=True)`, `messages.stream` |
+| `openai` | 3.19.2 | `chat.completions.create` (with and without `stream=True`), `chat.completions.parse`, `responses.create` (with and without `stream=True`), `responses.stream`, `responses.parse` |
+
+Other SDK versions are best effort. A newer SDK that expects fields or events the gateway does not send may fail to parse its replies; please report that as an issue.
+
 ## Run local live smoke tests
 
 The default test suite uses fake CLI executables and never contacts a model. To test the CLIs installed on your machine, install the development extra and opt in:
