@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools==77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "subbridge"
+version = "0.1.0a1"
+description = "Python wrappers for locally authenticated coding assistant CLIs"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = []
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[tool.setuptools.packages.find]
+include = ["subbridge*"]
+
+[tool.setuptools.package-data]
+subbridge = ["py.typed"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.5",
+    "ruff==0.16.9",
+]
+
+[project.urls]
+Homepage = "https://github.com/kunjan-p/subbridge"
+Repository = "https://github.com/kunjan-p/subbridge"
+Issues = "https://github.com/kunjan-p/subbridge/issues"
+Changelog = "https://github.com/kunjan-p/subbridge/blob/main/CHANGELOG.md"
+
+[project.scripts]
+subbridge = "subbridge.doctor:main"
