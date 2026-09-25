@@ -221,10 +221,37 @@ class ResponsesTests(GatewayTestCase):
         )
         self.assertEqual(response.output_parsed, Answer(answer=42))
 
+    def test_streamed_schema_drops_the_preamble(self) -> None:
+        with self.openai.responses.stream(
+            model="gpt-test", input="two-messages", text_format=Answer
+        ) as stream:
+            deltas = [
+                event.delta
+                for event in stream
+                if event.type == "response.output_text.delta"
+            ]
+            final = stream.get_final_response()
+        self.assertEqual("".join(deltas), json.dumps({"answer": 42}))
+        self.assertEqual(final.output_parsed, Answer(answer=42))
+        self.assertIn("--output-schema", self.turn_calls("codex")[0])
+
+    def test_non_dict_text_is_rejected(self) -> None:
+        with self.assertRaises(openai.BadRequestError) as raised:
+            self.create(text="weird")
+        self.assertEqual(raised.exception.param, "text")
+
     def test_stateful_and_tool_parameters_are_rejected(self) -> None:
+        image = {"type": "input_image", "image_url": "https://example.test/a.png"}
         for options, param in (
             ({"previous_response_id": "resp_1"}, "previous_response_id"),
             ({"tools": [{"type": "web_search"}]}, "tools"),
+            ({"conversation": "conv_1"}, "conversation"),
+            ({"prompt": {"id": "pmpt_1"}}, "prompt"),
+            ({"background": True}, "background"),
+            (
+                {"input": [{"role": "user", "content": [image]}]},
+                "input[0].content[0]",
+            ),
         ):
             with self.subTest(param=param):
                 with self.assertRaises(openai.BadRequestError) as raised:

@@ -12,6 +12,7 @@ from ._errors import ErrorStyle, GatewayError, openai_error
 from ._transcript import (
     OPENAI_ROLES,
     flatten,
+    invalid,
     json_schema_format,
     message_turns,
     model_name,
@@ -39,22 +40,25 @@ class ResponsesEndpoint:
         self.item_id = f"msg_{uuid.uuid4().hex}"
         self.created = int(time.time())
         self.model = "default"
+        self.instructions: str | None = None
         self.sequence = 0
 
     def parse(self, body: dict[str, Any]) -> TurnRequest:
         reject_params(body, REJECTED)
         model = model_name(body)
         self.model = model or self.model
-        turns = text_turn("system", body.get("instructions"), "instructions")
+        instructions = body.get("instructions")
+        turns = text_turn("system", instructions, "instructions")
+        self.instructions = instructions
         source = body.get("input")
         if isinstance(source, str):
             turns.append(("user", source))
         else:
             turns += message_turns(source, OPENAI_ROLES, "input")
         text_config = body.get("text")
-        text_format = (
-            text_config.get("format") if isinstance(text_config, dict) else None
-        )
+        if text_config is not None and not isinstance(text_config, dict):
+            raise invalid("`text` must be an object.", "text")
+        text_format = text_config.get("format") if text_config else None
         return TurnRequest(
             prompt=flatten(turns),
             model=model,
@@ -134,7 +138,7 @@ class ResponsesEndpoint:
             "usage": None if usage is None else _usage(usage),
             "error": None,
             "incomplete_details": None,
-            "instructions": None,
+            "instructions": self.instructions,
             "metadata": {},
             "parallel_tool_calls": False,
             "tool_choice": "none",
