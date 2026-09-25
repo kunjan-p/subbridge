@@ -235,13 +235,29 @@ class ClaudeClientTests(unittest.TestCase):
         self.assertIn("sonnet", command)
         self.assertIn("--effort", command)
         self.assertIn("--permission-mode", command)
-        self.assertIn("plan", command)
         self.assertNotIn("--cwd", command)
         self.assertIn("--json-schema", command)
         self.assertEqual(
             json.loads(command[command.index("--json-schema") + 1]),
             {"type": "object"},
         )
+
+    def test_default_mode_exposes_only_read_tools(self) -> None:
+        client = ClaudeClient(claude_path=str(fake_claude(self.tmp_path)))
+        command = client.start_thread()._build_command()
+        mode = command[command.index("--permission-mode") + 1]
+        self.assertEqual(mode, "dontAsk")
+        self.assertIn("--tools=Read,Glob,Grep", command)
+        self.assertIn("--strict-mcp-config", command)
+        self.assertNotIn("plan", command)
+
+    def test_explicit_mode_passes_through_without_tool_limits(self) -> None:
+        client = ClaudeClient(claude_path=str(fake_claude(self.tmp_path)))
+        for mode in ("plan", "acceptEdits", "dontAsk"):
+            command = client.start_thread(permission_mode=mode)._build_command()
+            self.assertEqual(command[command.index("--permission-mode") + 1], mode)
+            self.assertFalse(any(arg.startswith("--tools") for arg in command))
+            self.assertNotIn("--strict-mcp-config", command)
 
     def test_request_timeout_stops_the_cli(self) -> None:
         client = ClaudeClient(claude_path=str(fake_claude(self.tmp_path)))

@@ -22,7 +22,7 @@ You will get an acknowledgement on the report, and it stays private while a fix 
 SubBridge's security promises are its defaults, so a way around any of them is in scope:
 
 - Subscription-only mode letting a request use an API key, an endpoint override, or a non-subscription sign-in.
-- A run escaping the Codex `read-only` sandbox or the Claude Code `plan` permission mode that SubBridge requested.
+- A run escaping the Codex `read-only` sandbox or the Claude Code `read-only` mode (Read, Glob, and Grep only) that SubBridge requested.
 - Raw CLI status, events, or stderr appearing in results or error messages without the matching opt-in (`include_raw`, `include_events`, or `include_raw_diagnostics`).
 - A CLI process that keeps running after a timeout, error, or cancellation.
 - Input that makes SubBridge pass unintended flags or arguments to a CLI.

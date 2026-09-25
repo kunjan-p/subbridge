@@ -68,7 +68,7 @@ Both clients have the same methods. Their options differ and follow the table.
 
 Every turn call accepts `timeout` (seconds, default `300`, `None` for no limit) and `output_schema` (a JSON Schema dict). With a schema, Claude returns the parsed object in `structured_output`; Codex returns the schema-shaped JSON in `text`.
 
-Claude Code accepts `model`, `effort`, `cwd`, `additional_directories`, and `permission_mode` (`"plan"` by default; also `"default"`, `"acceptEdits"`, `"dontAsk"`).
+Claude Code accepts `model`, `effort`, `cwd`, `additional_directories`, and `permission_mode` (`"read-only"` by default; also Claude Code's own `"plan"`, `"default"`, `"acceptEdits"`, and `"dontAsk"`).
 
 Codex accepts `model`, `reasoning_effort`, `sandbox` (`"read-only"` by default; also `"workspace-write"`, `"danger-full-access"`), `cwd`, `approval_policy`, `network_access`, `web_search`, `additional_directories`, and `skip_git_repo_check` (default `True`). Its turn calls also take `images`.
 
@@ -108,7 +108,7 @@ For each provider it reports whether the CLI is installed and signed in, the aut
 The defaults stop a script from spending API credits or editing your files unless you opt in.
 
 - Subscription-only mode is on. Before starting a CLI, SubBridge removes `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, and `ANTHROPIC_BASE_URL` (Claude), or `OPENAI_API_KEY`, `CODEX_API_KEY`, and `OPENAI_BASE_URL` (Codex), from its environment. It then refuses to run unless the CLI reports Claude.ai or ChatGPT sign-in. Pass `subscription_only=False` to allow API keys, proxies, Bedrock, or Vertex.
-- Codex runs in its `read-only` sandbox and Claude Code in `plan` permission mode. Permission prompts are off, so a run never stops to wait for input.
+- Codex runs in its `read-only` sandbox. Claude Code runs in SubBridge's `read-only` mode: the model gets only the Read, Glob, and Grep tools and no MCP servers, and anything else is denied. Permission prompts are off, so a run never stops to wait for input.
 - `status()` omits the raw CLI output unless you pass `include_raw=True`. Turn results omit raw events unless you pass `include_events=True`. Error messages omit the CLI's stderr unless the client is created with `include_raw_diagnostics=True`. Raw output can contain prompts, file paths, and account details.
 - Timeouts, errors, Ctrl+C, and cancelled tasks kill the whole CLI process group, so no CLI process outlives your script.
 
@@ -120,6 +120,7 @@ SubBridge never reads credential files; the CLIs handle sign-in.
 - A signed-in CLI does not guarantee that your plan includes a model or that you have quota left. When a request is refused, the error includes the CLI's own message, such as when a usage limit resets.
 - `TurnResult.usage` counts the tokens of one turn. The CLIs do not report how much of your plan quota remains.
 - Model aliases like `haiku` and `gpt-6-luna` work only if your CLI version and plan offer them.
+- Each call starts the CLI with your own configuration. Claude Code runs your hooks and loads your plugins every time, which can add seconds to each request, and a hook that injects text can change the reply.
 
 ## Examples
 
