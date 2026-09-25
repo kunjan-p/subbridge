@@ -6,6 +6,8 @@ All notable changes to SubBridge are recorded here. The format follows [Keep a C
 
 ### Changed
 
+- Claude Code now runs in a new `read-only` permission mode by default, replacing `plan`. The model gets only the Read, Glob, and Grep tools and no MCP servers, where plan mode still offered Bash, Edit, and MCP tools and often added remarks about planning to plain answers. Pass `permission_mode="plan"` for the old behavior.
+
 - The package description now says what SubBridge does, and the package lists search keywords.
 
 ## [0.1.0a1]

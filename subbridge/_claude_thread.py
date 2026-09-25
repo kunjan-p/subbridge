@@ -18,7 +18,21 @@ if TYPE_CHECKING:
     from .claude import ClaudeClient
 
 
-ClaudePermissionMode = Literal["default", "acceptEdits", "plan", "dontAsk"]
+ClaudePermissionMode = Literal["read-only", "default", "acceptEdits", "plan", "dontAsk"]
+
+# "read-only" is SubBridge's own mode. Claude Code's plan mode also blocks
+# writes, but it still offers Bash, Edit, and MCP tools and makes the model
+# talk about planning. Here the model only has these tools and no MCP servers.
+# Project and local settings from the working directory are ignored, so a
+# repository's own hooks don't run.
+READ_ONLY_FLAGS = (
+    "--permission-mode",
+    "dontAsk",
+    "--tools=Read,Glob,Grep",
+    "--strict-mcp-config",
+    "--setting-sources",
+    "user",
+)
 
 
 @dataclass
@@ -27,7 +41,7 @@ class ClaudeThreadOptions:
     effort: str | None = None
     cwd: str | Path | None = None
     additional_directories: list[str | Path] | None = None
-    permission_mode: ClaudePermissionMode = "plan"
+    permission_mode: ClaudePermissionMode = "read-only"
 
 
 class ClaudeThread:
@@ -52,9 +66,11 @@ class ClaudeThread:
             "--verbose",
             "--permission-prompts",
             "none",
-            "--permission-mode",
-            self.options.permission_mode,
         ]
+        if self.options.permission_mode == "read-only":
+            cmd.extend(READ_ONLY_FLAGS)
+        else:
+            cmd.extend(["--permission-mode", self.options.permission_mode])
         if self.options.model:
             cmd.extend(["--model", self.options.model])
         if self.options.effort:
