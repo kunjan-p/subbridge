@@ -73,6 +73,8 @@ def fake_claude(
                     while True:
                         print(json.dumps({{"type": "assistant", "message": {{"content": [{{"type": "text", "text": "tick "}}]}}}}), flush=True)
                         time.sleep(0.05)
+                if prompt == "two-messages":
+                    print(json.dumps({{"type": "assistant", "message": {{"content": [{{"type": "text", "text": "Let me check the file."}}]}}}}), flush=True)
                 if prompt == "which-model":
                     prompt = args[args.index("--model") + 1]
                 print(json.dumps({{

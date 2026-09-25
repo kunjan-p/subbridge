@@ -443,7 +443,10 @@ class CloseDuringTurnTests(unittest.TestCase):
                         for _ in stream.text_stream:
                             got_first_tick.set()
 
-                worker = threading.Thread(target=ask)
+                # daemon=True: if the assertions below fail and this thread
+                # is (unexpectedly) still blocked reading the stream, it
+                # must not hang pytest's own process exit.
+                worker = threading.Thread(target=ask, daemon=True)
                 worker.start()
                 self.assertTrue(
                     got_first_tick.wait(timeout=5), "no streamed text arrived"

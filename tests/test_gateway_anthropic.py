@@ -89,6 +89,26 @@ class MessagesTests(GatewayTestCase):
         self.assertEqual(final.stop_reason, "end_turn")
         self.assertEqual(final.usage.output_tokens, 7)
 
+    def test_stream_joins_separate_assistant_messages_with_a_blank_line(self) -> None:
+        with self.anthropic.messages.stream(
+            model="sonnet",
+            max_tokens=100,
+            messages=[{"role": "user", "content": "two-messages"}],
+        ) as stream:
+            texts = list(stream.text_stream)
+        self.assertEqual(
+            "".join(texts), "Let me check the file.\n\nanswer: two-messages"
+        )
+
+    def test_non_streamed_reply_is_unaffected_by_the_join_separator(self) -> None:
+        # The non-streamed path takes its text from the CLI's own final
+        # `result` event rather than concatenating interim assistant
+        # messages, so it never sees the streamed path's "\n\n" separator.
+        message = self.create(
+            messages=[{"role": "user", "content": "two-messages"}],
+        )
+        self.assertEqual(message.content[0].text, "answer: two-messages")
+
     def test_raw_stream_sends_the_documented_event_order(self) -> None:
         events = list(self.create(stream=True))
         self.assertEqual(

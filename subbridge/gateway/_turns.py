@@ -66,13 +66,19 @@ class TextStream:
         self.events.close()
 
     def _read(self) -> Generator[str, None, None]:
+        started = False
         for event in self.events:
             if event.usage is not None:
                 self.usage = event.usage
             if event.kind == "turn_error":
                 raise turn_error(self.provider, event.text)
             if event.kind == "message" and event.text:
-                yield event.text
+                # Each "message" event is a separate assistant message (for
+                # example, one before a tool call and one after), not a
+                # fragment of the same one -- join them with a blank line so
+                # they don't run together, but never before the first.
+                yield f"\n\n{event.text}" if started else event.text
+                started = True
 
 
 def turn_error(provider: ProviderName, text: str | None) -> Exception:
