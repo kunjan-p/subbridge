@@ -42,4 +42,4 @@ Issues = "https://github.com/kunjan-p/subbridge/issues"
 Changelog = "https://github.com/kunjan-p/subbridge/blob/main/CHANGELOG.md"
 
 [project.scripts]
-subbridge = "subbridge.doctor:main"
+subbridge = "subbridge.cli:main"
