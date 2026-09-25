@@ -19,6 +19,7 @@ from unittest import mock
 import anthropic
 import openai
 from gateway_support import GatewayTestCase
+from test_claude import fake_claude
 
 import subbridge
 from subbridge.gateway._anthropic import MessagesEndpoint
@@ -408,6 +409,67 @@ class CloseDuringTurnTests(unittest.TestCase):
                 # second CLI run would have overwritten it with a new pid).
                 self.assertIn(503, statuses)
                 self.assertEqual(int(pid_file.read_text()), pid)
+
+    def test_close_stops_an_in_flight_streaming_turn(self) -> None:
+        """A streaming turn also registers in `_active_threads` via
+        `cli_slot()` (see `GatewayHandler._stream`), so `close()` must be
+        able to find and kill its CLI too, not just a non-streaming one.
+        """
+        with TemporaryDirectory() as tempdir:
+            bin_dir = Path(tempdir)
+            fake_claude(bin_dir)  # provides the "endless" prompt and its .pid file
+            pid_file = bin_dir / "claude.pid"
+            path = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+            with mock.patch.dict(os.environ, {"PATH": path}):
+                gateway = subbridge.serve()
+                self.addCleanup(gateway.close)  # close() is idempotent
+                client = anthropic.Anthropic(
+                    base_url=gateway.anthropic_base_url,
+                    api_key=gateway.api_key,
+                    max_retries=0,
+                )
+                got_first_tick = threading.Event()
+
+                def ask() -> None:
+                    # Any error is fine here; only close()'s effects matter.
+                    with (
+                        suppress(Exception),
+                        client.messages.stream(
+                            model="sonnet",
+                            max_tokens=10,
+                            messages=[{"role": "user", "content": "endless"}],
+                        ) as stream,
+                    ):
+                        for _ in stream.text_stream:
+                            got_first_tick.set()
+
+                worker = threading.Thread(target=ask)
+                worker.start()
+                self.assertTrue(
+                    got_first_tick.wait(timeout=5), "no streamed text arrived"
+                )
+                deadline = time.monotonic() + 5
+                while not pid_file.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(pid_file.exists(), "fake claude never started")
+                pid = int(pid_file.read_text())
+
+                started = time.monotonic()
+                gateway.close()
+                self.assertLess(time.monotonic() - started, 5)
+
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(0.05)
+                else:
+                    self.fail(f"fake claude (pid {pid}) is still running")
+
+                worker.join(timeout=5)
+                self.assertFalse(worker.is_alive())
 
 
 if __name__ == "__main__":

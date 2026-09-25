@@ -1,4 +1,4 @@
-"""The localhost HTTP server: routing, key checks, bodies, and replies."""
+"""The localhost HTTP server: routing, key checks, bodies, replies, and SSE writing."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Generator
-from contextlib import contextmanager, suppress
+from collections.abc import Generator, Iterable
+from contextlib import closing, contextmanager, suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlsplit
@@ -20,7 +20,7 @@ from ..errors import SubBridgeError
 from ..models import ProviderName, TurnResult
 from ._anthropic import MessagesEndpoint
 from ._errors import ErrorStyle, GatewayError, error_body, from_exception
-from ._turns import Endpoint, TurnRequest
+from ._turns import Endpoint, Frame, TextStream, TurnRequest
 
 HOST = "127.0.0.1"
 MAX_BODY_BYTES = 10 * 1024 * 1024
@@ -97,6 +97,15 @@ class GatewayServer(ThreadingHTTPServer):
             output_schema=request.output_schema,
             timeout=self.turn_timeout,
         )
+
+    def open_stream(self, provider: ProviderName, request: TurnRequest) -> TextStream:
+        thread = self._thread(provider, request)
+        events = thread.stream_normalized(
+            request.prompt,
+            output_schema=request.output_schema,
+            timeout=self.turn_timeout,
+        )
+        return TextStream(provider, events)
 
     def _thread(self, provider: ProviderName, request: TurnRequest) -> Any:
         client = self.clients[provider]
@@ -207,7 +216,10 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if endpoint is None:
             raise _unsupported_route(self.command, urlsplit(self.path).path)
         request = endpoint.parse(_parse_json(self._read_body()))
-        self._respond(endpoint, request)
+        if request.stream:
+            self._stream(endpoint, request)
+        else:
+            self._respond(endpoint, request)
 
     def _declared_length(self) -> int:
         try:
@@ -245,6 +257,42 @@ class GatewayHandler(BaseHTTPRequestHandler):
         with self.server.cli_slot():
             result = self.server.run(endpoint.provider, request)
         self._send_json(200, endpoint.respond(result))
+
+    def _stream(self, endpoint: Endpoint, request: TurnRequest) -> None:
+        # The slot (and this thread's registration in `_active_threads`, done
+        # inside `cli_slot()`) is held for the whole stream, not just until a
+        # result comes back, so `close()`'s `stop_in_flight_turns()` can find
+        # and kill this turn's CLI at any point while frames are still being
+        # written -- the same mechanism `_respond()` relies on.
+        with self.server.cli_slot():
+            texts = self.server.open_stream(endpoint.provider, request)
+            with closing(texts):
+                texts.prime()
+                self._start_sse()
+                self._write_stream(endpoint, texts)
+
+    def _write_stream(self, endpoint: Endpoint, texts: TextStream) -> None:
+        try:
+            self._write_frames(endpoint.stream(texts))
+        except ConnectionError:
+            return  # the client left; closing the stream stops the CLI
+        except SubBridgeError as exc:
+            with suppress(OSError):
+                self._write_frames(endpoint.stream_error(from_exception(exc)))
+        except Exception:
+            # The 200 status line is already on the wire, so this cannot
+            # become a fresh JSON 500 like `_dispatch()`'s bare except does
+            # for a request that never started streaming; send the same
+            # generic failure as an SSE error event instead.
+            _logger.exception("Unhandled error while streaming a gateway reply")
+            with suppress(OSError):
+                self._write_frames(
+                    endpoint.stream_error(
+                        GatewayError(
+                            500, "The SubBridge gateway hit an unexpected error."
+                        )
+                    )
+                )
 
     def _fail(self, style: ErrorStyle, error: GatewayError) -> None:
         # A reply to an error is often sent with request bytes still unread
@@ -314,8 +362,24 @@ class GatewayHandler(BaseHTTPRequestHandler):
         if self._send_body:
             self.wfile.write(data)
 
+    def _start_sse(self) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+
+    def _write_frames(self, frames: Iterable[Frame]) -> None:
+        for event, data in frames:
+            self.wfile.write(sse_frame(event, data))
+
     def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
         """Stay quiet per request; errors still reach log_error."""
+
+
+def sse_frame(event: str | None, data: Any) -> bytes:
+    payload = data if isinstance(data, str) else json.dumps(data, separators=(",", ":"))
+    head = f"event: {event}\n" if event else ""
+    return f"{head}data: {payload}\n\n".encode()
 
 
 def _unsupported_route(method: str, path: str) -> GatewayError:

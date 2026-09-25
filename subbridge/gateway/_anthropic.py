@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
 from typing import Any
 
 from ..models import ProviderName, TurnResult, Usage
-from ._errors import ErrorStyle
+from ._errors import ErrorStyle, GatewayError, error_body
 from ._transcript import (
     flatten,
     invalid,
@@ -15,7 +16,7 @@ from ._transcript import (
     reject_params,
     text_turn,
 )
-from ._turns import TurnRequest
+from ._turns import Frame, TextStream, TurnRequest
 
 REJECTED = ("tools", "tool_choice", "mcp_servers", "container")
 ROLES = {"user": "user", "assistant": "assistant"}
@@ -49,6 +50,21 @@ class MessagesEndpoint:
         content = [{"type": "text", "text": result.text}]
         return self._message(content, "end_turn", result.usage)
 
+    def stream(self, texts: TextStream) -> Iterator[Frame]:
+        yield _event("message_start", message=self._message([], None, None))
+        block = {"type": "text", "text": ""}
+        yield _event("content_block_start", index=0, content_block=block)
+        for text in texts:
+            delta = {"type": "text_delta", "text": text}
+            yield _event("content_block_delta", index=0, delta=delta)
+        yield _event("content_block_stop", index=0)
+        stop = {"stop_reason": "end_turn", "stop_sequence": None}
+        yield _event("message_delta", delta=stop, usage=_usage(texts.usage))
+        yield _event("message_stop")
+
+    def stream_error(self, error: GatewayError) -> list[Frame]:
+        return [("error", error_body("anthropic", error))]
+
     def _message(
         self,
         content: list[dict[str, Any]],
@@ -65,6 +81,10 @@ class MessagesEndpoint:
             "stop_sequence": None,
             "usage": _usage(usage),
         }
+
+
+def _event(kind: str, **fields: Any) -> Frame:
+    return kind, {"type": kind, **fields}
 
 
 def _usage(usage: Usage | None) -> dict[str, int]:

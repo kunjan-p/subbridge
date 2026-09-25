@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from ..models import ProviderName, TurnResult
-from ._errors import ErrorStyle
+from .._process import describe_turn_failure
+from ..errors import ClaudeTurnError, CodexTurnError
+from ..models import ProviderName, StreamEvent, TurnResult, Usage
+from ._errors import ErrorStyle, GatewayError
+
+# One server-sent event: (event name or None, JSON payload or raw data string).
+Frame = tuple[str | None, Any]
 
 
 @dataclass
@@ -28,3 +34,51 @@ class Endpoint(Protocol):
     def parse(self, body: dict[str, Any]) -> TurnRequest: ...
 
     def respond(self, result: TurnResult) -> dict[str, Any]: ...
+
+    def stream(self, texts: TextStream) -> Iterator[Frame]: ...
+
+    def stream_error(self, error: GatewayError) -> list[Frame]: ...
+
+
+class TextStream:
+    """The text of one CLI turn as it arrives; raises the provider's turn error."""
+
+    def __init__(
+        self, provider: ProviderName, events: Generator[StreamEvent, None, None]
+    ) -> None:
+        self.provider = provider
+        self.events = events
+        self.usage: Usage | None = None
+        self._texts = self._read()
+        self._first: str | None = None
+
+    def prime(self) -> None:
+        """Wait for the first text, so an early failure still gets an HTTP status."""
+        self._first = next(self._texts, None)
+
+    def __iter__(self) -> Iterator[str]:
+        if self._first is not None:
+            yield self._first
+        yield from self._texts
+
+    def close(self) -> None:
+        self._texts.close()
+        self.events.close()
+
+    def _read(self) -> Generator[str, None, None]:
+        for event in self.events:
+            if event.usage is not None:
+                self.usage = event.usage
+            if event.kind == "turn_error":
+                raise turn_error(self.provider, event.text)
+            if event.kind == "message" and event.text:
+                yield event.text
+
+
+def turn_error(provider: ProviderName, text: str | None) -> Exception:
+    label, error = (
+        ("Claude Code", ClaudeTurnError)
+        if provider == "claude"
+        else ("Codex", CodexTurnError)
+    )
+    return error(describe_turn_failure(label, text or f"{label} turn failed"))

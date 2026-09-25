@@ -62,6 +62,17 @@ def fake_claude(
                 if prompt == "plan-denied":
                     print(json.dumps({{"type": "result", "subtype": "error_during_execution", "result": "model is not available on your plan"}}))
                     sys.exit(1)
+                if prompt == "partial-then-error":
+                    print(json.dumps({{"type": "assistant", "message": {{"content": [{{"type": "text", "text": "partial"}}]}}}}), flush=True)
+                    print(json.dumps({{"type": "result", "subtype": "success", "is_error": True, "result": "API Error: usage limit reached"}}))
+                    sys.exit(0)
+                if prompt == "endless":
+                    import os, time
+                    with open(__file__ + ".pid", "w") as pid_file:
+                        pid_file.write(str(os.getpid()))
+                    while True:
+                        print(json.dumps({{"type": "assistant", "message": {{"content": [{{"type": "text", "text": "tick "}}]}}}}), flush=True)
+                        time.sleep(0.05)
                 if prompt == "which-model":
                     prompt = args[args.index("--model") + 1]
                 print(json.dumps({{
