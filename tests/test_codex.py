@@ -21,6 +21,8 @@ def fake_codex(tmp_path: Path, status: str = "Logged in using ChatGPT") -> Path:
             import time
 
             args = sys.argv[1:]
+            with open(__file__ + ".calls", "a") as log:
+                print(json.dumps(args), file=log)
             if args == ["--version"]:
                 print("codex-cli test")
             elif args == ["login", "status"]:
@@ -46,11 +48,23 @@ def fake_codex(tmp_path: Path, status: str = "Logged in using ChatGPT") -> Path:
                 if prompt == "plan-denied":
                     print(json.dumps({{"type": "turn.failed", "error": {{"message": "model is not supported when using Codex with a ChatGPT account"}}}}), flush=True)
                     sys.exit(1)
+                if prompt == "usage-limit":
+                    print(json.dumps({{"type": "turn.failed", "error": {{"message": "You've hit your usage limit. Try again later."}}}}), flush=True)
+                    sys.exit(1)
+                if prompt == "partial-then-error":
+                    print(json.dumps({{"type": "item.completed", "item": {{"type": "agent_message", "text": "partial"}}}}), flush=True)
+                    print(json.dumps({{"type": "turn.failed", "error": {{"message": "You've hit your usage limit."}}}}), flush=True)
+                    sys.exit(1)
+                if prompt == "which-model":
+                    prompt = args[args.index("--model") + 1]
                 if prompt == "large-event":
                     print(json.dumps({{"type": "event", "payload": "x" * 70000}}), flush=True)
                     sys.exit(0)
                 print(json.dumps({{"type": "thread.started", "thread_id": "thread-123"}}), flush=True)
-                print(json.dumps({{"type": "item.completed", "item": {{"type": "agent_message", "text": "answer: " + prompt}}}}), flush=True)
+                reply = "answer: " + prompt
+                if "--output-schema" in args:
+                    reply = json.dumps({{"answer": 42}})
+                print(json.dumps({{"type": "item.completed", "item": {{"type": "agent_message", "text": reply}}}}), flush=True)
                 print(json.dumps({{"type": "turn.completed", "usage": {{
                     "input_tokens": 11,
                     "cached_input_tokens": 4,

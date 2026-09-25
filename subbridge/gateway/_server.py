@@ -19,6 +19,7 @@ from ..models import ProviderName, TurnResult
 from ._anthropic import MessagesEndpoint
 from ._errors import ErrorStyle, GatewayError, error_body, from_exception
 from ._lifecycle import TurnLifecycle, drain_leftover_body
+from ._openai_chat import ChatCompletionsEndpoint
 from ._turns import Endpoint, Frame, TextStream, TurnRequest
 
 HOST = "127.0.0.1"
@@ -27,6 +28,7 @@ _HANDLER_TIMEOUT = 30.0
 
 ROUTES: dict[str, type[Endpoint]] = {
     "/v1/messages": MessagesEndpoint,
+    "/v1/chat/completions": ChatCompletionsEndpoint,
 }
 
 _logger = logging.getLogger(__name__)

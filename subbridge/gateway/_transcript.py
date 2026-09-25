@@ -106,3 +106,12 @@ def _part_text(part: Any, param: str) -> str:
         param=param,
         code="unsupported_content",
     )
+
+
+# Chat Completions messages and Responses input items share these roles.
+OPENAI_ROLES = {
+    "system": "system",
+    "developer": "system",
+    "user": "user",
+    "assistant": "assistant",
+}
