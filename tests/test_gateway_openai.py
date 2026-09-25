@@ -1,5 +1,6 @@
 """Drive the OpenAI endpoints with the official openai SDK against fake Codex."""
 
+import json
 import unittest
 
 import openai
@@ -67,9 +68,63 @@ class ChatCompletionsTests(GatewayTestCase):
         self.assertEqual(completion.choices[0].message.parsed, Answer(answer=42))
         self.assertIn("--output-schema", self.turn_calls("codex")[0])
 
+    def test_model_reaches_the_codex_cli(self) -> None:
+        self.create()
+        call = self.turn_calls("codex")[0]
+        self.assertEqual(call[call.index("--model") + 1], "gpt-test")
+
+    def test_explicit_null_n_is_accepted(self) -> None:
+        body = json.dumps({"model": "gpt-test", "messages": USER_HELLO, "n": None})
+        status, payload = self.post(
+            "/v1/chat/completions", body.encode(), self.key_headers()
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["choices"][0]["message"]["content"], "answer: hello")
+
+    def test_non_streamed_reply_keeps_only_the_final_message(self) -> None:
+        completion = self.create(messages=[{"role": "user", "content": "two-messages"}])
+        self.assertEqual(completion.choices[0].message.content, "answer: two-messages")
+
+    def test_stream_joins_two_agent_messages_with_a_blank_line(self) -> None:
+        chunks = list(
+            self.create(
+                messages=[{"role": "user", "content": "two-messages"}], stream=True
+            )
+        )
+        text = "".join(chunk.choices[0].delta.content or "" for chunk in chunks)
+        self.assertEqual(text, "Let me check the file.\n\nanswer: two-messages")
+
+    def test_streamed_structured_output_drops_the_preamble(self) -> None:
+        with self.openai.chat.completions.stream(
+            model="gpt-test",
+            messages=[{"role": "user", "content": "two-messages"}],
+            response_format=Answer,
+        ) as stream:
+            stream.until_done()
+            completion = stream.get_final_completion()
+        self.assertEqual(completion.choices[0].message.parsed, Answer(answer=42))
+
     def test_tools_and_multiple_choices_are_rejected_before_any_cli_runs(self) -> None:
         tool = {"type": "function", "function": {"name": "lookup", "parameters": {}}}
-        for options, param in (({"tools": [tool]}, "tools"), ({"n": 2}, "n")):
+        function = {"name": "lookup", "parameters": {}}
+        audio_part = {
+            "type": "input_audio",
+            "input_audio": {"data": "AAAA", "format": "wav"},
+        }
+        cases = (
+            ({"tools": [tool]}, "tools"),
+            ({"n": 2}, "n"),
+            ({"tool_choice": "auto"}, "tool_choice"),
+            ({"functions": [function]}, "functions"),
+            ({"function_call": "auto"}, "function_call"),
+            ({"audio": {"voice": "alloy", "format": "wav"}}, "audio"),
+            ({"response_format": {"type": "json_object"}}, "response_format"),
+            (
+                {"messages": [{"role": "user", "content": [audio_part]}]},
+                "messages[0].content[0]",
+            ),
+        )
+        for options, param in cases:
             with self.subTest(param=param):
                 with self.assertRaises(openai.BadRequestError) as raised:
                     self.create(**options)

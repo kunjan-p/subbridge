@@ -76,7 +76,9 @@ class GatewayServer(ThreadingHTTPServer):
             output_schema=request.output_schema,
             timeout=self.turn_timeout,
         )
-        return TextStream(provider, events)
+        return TextStream(
+            provider, events, only_final_message=request.output_schema is not None
+        )
 
     def _thread(self, provider: ProviderName, request: TurnRequest) -> Any:
         client = self.clients[provider]

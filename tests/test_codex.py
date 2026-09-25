@@ -61,6 +61,8 @@ def fake_codex(tmp_path: Path, status: str = "Logged in using ChatGPT") -> Path:
                     print(json.dumps({{"type": "event", "payload": "x" * 70000}}), flush=True)
                     sys.exit(0)
                 print(json.dumps({{"type": "thread.started", "thread_id": "thread-123"}}), flush=True)
+                if prompt == "two-messages":
+                    print(json.dumps({{"type": "item.completed", "item": {{"type": "agent_message", "text": "Let me check the file."}}}}), flush=True)
                 reply = "answer: " + prompt
                 if "--output-schema" in args:
                     reply = json.dumps({{"answer": 42}})

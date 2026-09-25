@@ -44,11 +44,23 @@ class TextStream:
     """The text of one CLI turn as it arrives; raises the provider's turn error."""
 
     def __init__(
-        self, provider: ProviderName, events: Generator[StreamEvent, None, None]
+        self,
+        provider: ProviderName,
+        events: Generator[StreamEvent, None, None],
+        *,
+        only_final_message: bool = False,
     ) -> None:
         self.provider = provider
         self.events = events
         self.usage: Usage | None = None
+        # A structured-output request needs one JSON document, not a preamble
+        # followed by one, so its stream buffers every "message" event and
+        # emits only the last -- matching the non-streamed `TurnCollector`,
+        # which overwrites (rather than appends to) its text for Codex -- so
+        # a streamed and non-streamed reply to the same request parse
+        # identically. Anthropic's endpoint never sets `output_schema`, so it
+        # never asks for this and keeps the join-everything behavior below.
+        self.only_final_message = only_final_message
         self._texts = self._read()
         self._first: str | None = None
 
@@ -66,6 +78,9 @@ class TextStream:
         self.events.close()
 
     def _read(self) -> Generator[str, None, None]:
+        if self.only_final_message:
+            yield from self._read_final_message()
+            return
         started = False
         for event in self.events:
             if event.usage is not None:
@@ -79,6 +94,18 @@ class TextStream:
                 # they don't run together, but never before the first.
                 yield f"\n\n{event.text}" if started else event.text
                 started = True
+
+    def _read_final_message(self) -> Generator[str, None, None]:
+        final: str | None = None
+        for event in self.events:
+            if event.usage is not None:
+                self.usage = event.usage
+            if event.kind == "turn_error":
+                raise turn_error(self.provider, event.text)
+            if event.kind == "message" and event.text:
+                final = event.text
+        if final is not None:
+            yield final
 
 
 def turn_error(provider: ProviderName, text: str | None) -> Exception:

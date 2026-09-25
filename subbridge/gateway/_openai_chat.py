@@ -34,7 +34,7 @@ class ChatCompletionsEndpoint:
 
     def parse(self, body: dict[str, Any]) -> TurnRequest:
         reject_params(body, REJECTED)
-        if body.get("n", 1) != 1:
+        if body.get("n") not in (None, 1):
             raise invalid("`n` must be 1; the gateway returns one choice.", "n")
         model = model_name(body)
         self.model = model or self.model
