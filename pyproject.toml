@@ -31,6 +31,8 @@ subbridge = ["py.typed"]
 dev = [
     "pytest==9.1.1",
     "ruff==0.16.9",
+    "anthropic==1.8.0",
+    "openai==3.19.2",
 ]
 
 [project.urls]

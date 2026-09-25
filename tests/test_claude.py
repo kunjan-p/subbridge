@@ -31,6 +31,8 @@ def fake_claude(
             import sys
 
             args = sys.argv[1:]
+            with open(__file__ + ".calls", "a") as log:
+                print(json.dumps(args), file=log)
             if args == ["--version"]:
                 print("2.1.test")
             elif args == ["auth", "status", "--json"]:
@@ -60,6 +62,8 @@ def fake_claude(
                 if prompt == "plan-denied":
                     print(json.dumps({{"type": "result", "subtype": "error_during_execution", "result": "model is not available on your plan"}}))
                     sys.exit(1)
+                if prompt == "which-model":
+                    prompt = args[args.index("--model") + 1]
                 print(json.dumps({{
                     "type": "assistant",
                     "message": {{"content": [{{"type": "text", "text": "x" * 70000 if prompt == "large-event" else "answer: " + prompt}}]}},
