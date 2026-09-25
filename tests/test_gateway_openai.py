@@ -1,6 +1,7 @@
 """Drive the OpenAI endpoints with the official openai SDK against fake Codex."""
 
 import json
+import os
 import unittest
 
 import openai
@@ -158,6 +159,100 @@ class ChatCompletionsTests(GatewayTestCase):
                 texts.append(chunk.choices[0].delta.content)
         self.assertIn("partial", texts)
         self.assertIn("usage limit", raised.exception.message)
+
+
+class ResponsesTests(GatewayTestCase):
+    def create(self, **kwargs):
+        options = {"model": "gpt-test", "input": "hello"}
+        return self.openai.responses.create(**{**options, **kwargs})
+
+    def test_create_returns_output_text_and_usage(self) -> None:
+        response = self.create(max_output_tokens=50, temperature=0.2)
+        self.assertEqual(response.output_text, "answer: hello")
+        self.assertEqual(response.status, "completed")
+        self.assertEqual(response.usage.input_tokens, 11)
+        self.assertEqual(response.usage.output_tokens, 8)
+        self.assertEqual(response.usage.output_tokens_details.reasoning_tokens, 2)
+
+    def test_instructions_and_input_items_join_the_transcript(self) -> None:
+        response = self.create(
+            instructions="Be brief.",
+            input=[
+                {"role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+                {"role": "assistant", "content": "hello"},
+                {"role": "user", "content": "again"},
+            ],
+        )
+        self.assertEqual(
+            response.output_text,
+            "answer: <system>\nBe brief.\n</system>\n\n<user>\nhi\n</user>\n\n"
+            "<assistant>\nhello\n</assistant>\n\n<user>\nagain\n</user>",
+        )
+
+    def test_raw_stream_sends_the_documented_event_order(self) -> None:
+        events = list(self.create(stream=True))
+        self.assertEqual(
+            [event.type for event in events],
+            [
+                "response.created",
+                "response.output_item.added",
+                "response.content_part.added",
+                "response.output_text.delta",
+                "response.output_text.done",
+                "response.content_part.done",
+                "response.output_item.done",
+                "response.completed",
+            ],
+        )
+        self.assertEqual(
+            [event.sequence_number for event in events], list(range(len(events)))
+        )
+
+    def test_stream_helper_returns_the_final_response(self) -> None:
+        with self.openai.responses.stream(model="gpt-test", input="hello") as stream:
+            deltas = [e.delta for e in stream if e.type == "response.output_text.delta"]
+            final = stream.get_final_response()
+        self.assertEqual("".join(deltas), "answer: hello")
+        self.assertEqual(final.output_text, "answer: hello")
+
+    def test_json_schema_text_format_reaches_codex(self) -> None:
+        response = self.openai.responses.parse(
+            model="gpt-test", input="hello", text_format=Answer
+        )
+        self.assertEqual(response.output_parsed, Answer(answer=42))
+
+    def test_stateful_and_tool_parameters_are_rejected(self) -> None:
+        for options, param in (
+            ({"previous_response_id": "resp_1"}, "previous_response_id"),
+            ({"tools": [{"type": "web_search"}]}, "tools"),
+        ):
+            with self.subTest(param=param):
+                with self.assertRaises(openai.BadRequestError) as raised:
+                    self.create(**options)
+                self.assertEqual(raised.exception.param, param)
+        self.assertEqual(self.cli_calls("codex"), [])
+
+    def test_usage_limit_is_429(self) -> None:
+        for stream in (False, True):
+            with (
+                self.subTest(stream=stream),
+                self.assertRaises(openai.RateLimitError),
+            ):
+                self.create(input="usage-limit", stream=stream)
+
+    def test_failure_after_text_arrives_as_an_error_event(self) -> None:
+        events = list(self.create(input="partial-then-error", stream=True))
+        self.assertEqual(events[-1].type, "error")
+        self.assertEqual(events[-1].code, "rate_limit_exceeded")
+        self.assertIn("usage limit", events[-1].message)
+
+    @unittest.skipUnless(os.name == "posix", "checks the process by pid")
+    def test_client_disconnect_stops_the_cli(self) -> None:
+        with self.openai.responses.stream(model="gpt-test", input="endless") as stream:
+            for event in stream:
+                if event.type == "response.output_text.delta":
+                    break
+        self.assert_cli_exits("codex")
 
 
 if __name__ == "__main__":

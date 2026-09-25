@@ -55,6 +55,13 @@ def fake_codex(tmp_path: Path, status: str = "Logged in using ChatGPT") -> Path:
                     print(json.dumps({{"type": "item.completed", "item": {{"type": "agent_message", "text": "partial"}}}}), flush=True)
                     print(json.dumps({{"type": "turn.failed", "error": {{"message": "You've hit your usage limit."}}}}), flush=True)
                     sys.exit(1)
+                if prompt == "endless":
+                    import os
+                    with open(__file__ + ".pid", "w") as pid_file:
+                        pid_file.write(str(os.getpid()))
+                    while True:
+                        print(json.dumps({{"type": "item.completed", "item": {{"type": "agent_message", "text": "tick "}}}}), flush=True)
+                        time.sleep(0.05)
                 if prompt == "which-model":
                     prompt = args[args.index("--model") + 1]
                 if prompt == "large-event":
