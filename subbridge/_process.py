@@ -107,11 +107,10 @@ class SyncProcessIO:
         return "" if line is None else line.decode("utf-8")
 
 
-def classify_provider_failure(provider: str, details: str) -> str | None:
-    lowered = details.lower()
-    if any(
-        term in lowered
-        for term in (
+_FAILURE_TERMS = (
+    (
+        "plan",
+        (
             "not available on your plan",
             "not included in your plan",
             "plan does not include",
@@ -119,32 +118,49 @@ def classify_provider_failure(provider: str, details: str) -> str | None:
             "not entitled",
             "not supported when using codex with a chatgpt account",
             "not available for your account",
-        )
-    ):
-        return f"{provider} rejected the requested model because it appears unavailable on this account plan. Check the provider's model picker or run `subbridge doctor`; plan entitlements cannot always be queried by the CLI."
-    if any(
-        term in lowered
-        for term in (
+        ),
+    ),
+    (
+        "model",
+        (
             "model_not_found",
             "unknown model",
             "invalid model",
             "model not found",
             "unrecognized model",
-        )
-    ):
-        return f"{provider} rejected the requested model name. It may be misspelled, unavailable in this CLI version, or unavailable to this account; run `subbridge doctor` to inspect CLI-known models."
-    if any(
-        term in lowered
-        for term in (
+        ),
+    ),
+    (
+        "rate_limit",
+        (
             "usage limit",
             "rate limit",
             "quota exceeded",
             "capacity limit",
             "limit reached",
-        )
-    ):
-        return f"{provider} reported a usage or rate limit. Check the provider account's usage page; detailed quota data is not exposed consistently by the CLI."
+        ),
+    ),
+)
+
+_FAILURE_HINTS = {
+    "plan": "{provider} rejected the requested model because it appears unavailable on this account plan. Check the provider's model picker or run `subbridge doctor`; plan entitlements cannot always be queried by the CLI.",
+    "model": "{provider} rejected the requested model name. It may be misspelled, unavailable in this CLI version, or unavailable to this account; run `subbridge doctor` to inspect CLI-known models.",
+    "rate_limit": "{provider} reported a usage or rate limit. Check the provider account's usage page; detailed quota data is not exposed consistently by the CLI.",
+}
+
+
+def failure_kind(details: str) -> str | None:
+    """Return "plan", "model", or "rate_limit" when CLI output names that failure."""
+    lowered = details.lower()
+    for kind, terms in _FAILURE_TERMS:
+        if any(term in lowered for term in terms):
+            return kind
     return None
+
+
+def classify_provider_failure(provider: str, details: str) -> str | None:
+    kind = failure_kind(details)
+    return None if kind is None else _FAILURE_HINTS[kind].format(provider=provider)
 
 
 def describe_turn_failure(provider: str, error: str, context: str = "") -> str:

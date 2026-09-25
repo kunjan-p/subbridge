@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 
 from subbridge._process import (
     describe_turn_failure,
+    failure_kind,
     process_error_message,
     process_group_options,
     terminate_process_tree,
@@ -30,6 +31,14 @@ class ProcessErrorMessageTests(unittest.TestCase):
             "Codex", 1, "usage limit reached", include_raw_diagnostics=False
         )
         self.assertIn("usage or rate limit", message)
+
+
+class FailureKindTests(unittest.TestCase):
+    def test_names_the_failure_the_cli_reported(self) -> None:
+        self.assertEqual(failure_kind("model is not available on your plan"), "plan")
+        self.assertEqual(failure_kind("Unknown model: gpt-nope"), "model")
+        self.assertEqual(failure_kind("You've hit your usage limit."), "rate_limit")
+        self.assertIsNone(failure_kind("boom"))
 
 
 class TurnFailureMessageTests(unittest.TestCase):
