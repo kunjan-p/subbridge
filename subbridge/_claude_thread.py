@@ -23,12 +23,16 @@ ClaudePermissionMode = Literal["read-only", "default", "acceptEdits", "plan", "d
 # "read-only" is SubBridge's own mode. Claude Code's plan mode also blocks
 # writes, but it still offers Bash, Edit, and MCP tools and makes the model
 # talk about planning. Here the model only has these tools and no MCP servers.
-READ_ONLY_FLAGS = [
+# Project and local settings from the working directory are ignored, so a
+# repository's own hooks don't run.
+READ_ONLY_FLAGS = (
     "--permission-mode",
     "dontAsk",
     "--tools=Read,Glob,Grep",
     "--strict-mcp-config",
-]
+    "--setting-sources",
+    "user",
+)
 
 
 @dataclass

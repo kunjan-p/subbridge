@@ -108,7 +108,7 @@ For each provider it reports whether the CLI is installed and signed in, the aut
 The defaults stop a script from spending API credits or editing your files unless you opt in.
 
 - Subscription-only mode is on. Before starting a CLI, SubBridge removes `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, and `ANTHROPIC_BASE_URL` (Claude), or `OPENAI_API_KEY`, `CODEX_API_KEY`, and `OPENAI_BASE_URL` (Codex), from its environment. It then refuses to run unless the CLI reports Claude.ai or ChatGPT sign-in. Pass `subscription_only=False` to allow API keys, proxies, Bedrock, or Vertex.
-- Codex runs in its `read-only` sandbox. Claude Code runs in SubBridge's `read-only` mode: the model gets only the Read, Glob, and Grep tools and no MCP servers, and anything else is denied. Permission prompts are off, so a run never stops to wait for input.
+- Codex runs in its `read-only` sandbox. Claude Code runs in SubBridge's `read-only` mode: the model gets only the Read, Glob, and Grep tools and no MCP servers, and settings from the working directory, such as a cloned repository's hooks, are ignored. Hooks and plugins from your own user settings still run. Permission prompts are off, so a run never stops to wait for input.
 - `status()` omits the raw CLI output unless you pass `include_raw=True`. Turn results omit raw events unless you pass `include_events=True`. Error messages omit the CLI's stderr unless the client is created with `include_raw_diagnostics=True`. Raw output can contain prompts, file paths, and account details.
 - Timeouts, errors, Ctrl+C, and cancelled tasks kill the whole CLI process group, so no CLI process outlives your script.
 

@@ -27,4 +27,6 @@ SubBridge's security promises are its defaults, so a way around any of them is i
 - A CLI process that keeps running after a timeout, error, or cancellation.
 - Input that makes SubBridge pass unintended flags or arguments to a CLI.
 
+Hooks, plugins, and settings that you configured yourself run with your permissions by design, so code they run is not an escape from read-only mode.
+
 Vulnerabilities in the `claude` or `codex` CLIs themselves belong with [Anthropic](https://www.anthropic.com/responsible-disclosure-policy) or [OpenAI](https://openai.com/security/disclosure/).
