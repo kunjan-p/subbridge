@@ -1,2 +1,20 @@
-- name: aislop — AI Code Quality Gate
-  uses: scanaislop/aislop@v0.16.1
+name: aislop
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  aislop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      # Third-party action: pinned to the v0.16.1 commit, like the CLI version below.
+      - name: aislop — AI Code Quality Gate
+        uses: scanaislop/aislop@7d50952bf26a450e94244760b73eec15efad3724 # v0.16.1
+        with:
+          version: "0.16.1"
