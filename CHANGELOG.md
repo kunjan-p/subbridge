@@ -8,6 +8,8 @@ All notable changes to SubBridge are recorded here. The format follows [Keep a C
 
 - A local gateway for the official `anthropic` and `openai` Python SDKs: `subbridge run -- <command>`, `subbridge serve`, and `subbridge.serve()`. Prototype on the subscription your team already has, ship with a real API key. It listens on `127.0.0.1` only, requires a key it generates at each start, and answers `POST /v1/messages` with Claude Code and `POST /v1/chat/completions` and `POST /v1/responses` with Codex, streaming included, within what your plan and your organization's policy allow. Tools, images, and other unsupported parameters are rejected with a 400, and other endpoints with a 404. Tested with anthropic 1.8.0 and openai 3.19.2.
 
+- `subbridge.use_subscription()`, a one-line, in-process alternative to `subbridge run`: it starts the gateway and sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_API_KEY` for the whole process, so `Anthropic()` and `OpenAI()` need no arguments. Call it before creating either client. Idempotent while a gateway is running; closing it restores those four variables and lets a later call start a fresh gateway.
+
 ### Changed
 
 - `subbridge` is now a command with `doctor`, `serve`, and `run` subcommands. `subbridge doctor` and `subbridge doctor --json` work as before; `subbridge` alone prints help instead of running the doctor.

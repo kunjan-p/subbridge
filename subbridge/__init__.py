@@ -1,7 +1,7 @@
 from .claude import ClaudeClient
 from .codex import CodexClient
 from .events import normalize_event
-from .gateway import Gateway, serve
+from .gateway import Gateway, serve, use_subscription
 from .models import (
     ClaudeStatus,
     CodexStatus,
@@ -25,4 +25,5 @@ __all__ = [
     "Usage",
     "normalize_event",
     "serve",
+    "use_subscription",
 ]

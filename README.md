@@ -137,6 +137,29 @@ print(codex.output_text)
 
 Ctrl+C and SIGTERM (on macOS and Linux) during `subbridge run` go to `app.py`, not to the gateway; `run` exits with `app.py`'s own exit code once it does. See `subbridge run --help` for the exit codes of the other outcomes, such as a command that is not found or a port already in use.
 
+### Or, from Python
+
+`subbridge run` needs no changes to your script at all, but it does mean running a wrapper command instead of your script directly. If you would rather add one line to the script itself, call `subbridge.use_subscription()` before creating any SDK client:
+
+```python
+import subbridge
+
+subbridge.use_subscription()
+
+from anthropic import Anthropic
+from openai import OpenAI
+
+claude = Anthropic().messages.create(
+    model="sonnet",
+    max_tokens=500,
+    messages=[{"role": "user", "content": "Name one prime number."}],
+)
+codex = OpenAI().responses.create(model="gpt-6-luna", input="Name one prime number.")
+print(claude.content[0].text, codex.output_text)
+```
+
+Call `use_subscription()` before constructing `Anthropic()` or `OpenAI()`, not after: both SDKs read their base URL and key once, at construction, from the environment variables it sets. In production, delete the `subbridge.use_subscription()` line and set a real `ANTHROPIC_API_KEY` (and/or `OPENAI_API_KEY`) instead; the rest of the script is unchanged.
+
 ### From prototype to production
 
 The same script, two commands:

@@ -13,7 +13,8 @@ from collections.abc import Generator
 from contextlib import contextmanager, suppress
 
 from .doctor import print_report
-from .gateway import Gateway, serve
+from .gateway import Gateway, client_environment, proxy_capture_warning, serve
+from .gateway._process_env import PROXY_NOTE
 
 TAGLINE = (
     "Prototype on the subscription your team already has, ship with a real API key."
@@ -27,37 +28,9 @@ _RUN_EXIT_CODES = (
     "already in use; 2 for a usage error."
 )
 
-_PROXY_VARIABLES = ("http_proxy", "https_proxy", "all_proxy")
-_PROXY_NOTE = (
-    "If HTTP_PROXY, HTTPS_PROXY, or ALL_PROXY is set, add 127.0.0.1 to "
-    "NO_PROXY too, or the SDKs may send the gateway key and your prompts to "
-    "that proxy instead of the gateway."
-)
-
-
-def _proxy_capture_warning() -> str | None:
-    """A one-line warning when a proxy could intercept the gateway's own traffic.
-
-    The official SDKs treat the gateway's `127.0.0.1` base URL like any other
-    HTTP endpoint, so `HTTP_PROXY`, `HTTPS_PROXY`, or `ALL_PROXY` (either
-    case) still applies to it unless `NO_PROXY`/`no_proxy` exempts
-    `127.0.0.1`.
-    """
-    active = any(
-        os.environ.get(name.upper()) or os.environ.get(name)
-        for name in _PROXY_VARIABLES
-    )
-    if not active:
-        return None
-    no_proxy = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
-    exempted = {entry.strip() for entry in no_proxy.split(",")}
-    if "127.0.0.1" in exempted:
-        return None
-    return f"subbridge: {_PROXY_NOTE}"
-
 
 def _warn_about_proxy_capture() -> None:
-    warning = _proxy_capture_warning()
+    warning = proxy_capture_warning()
     if warning:
         print(warning, file=sys.stderr)
 
@@ -94,7 +67,7 @@ def _parser() -> argparse.ArgumentParser:
         "run",
         help="Run a command with the gateway's base URLs and key in its environment.",
         description=f"{TAGLINE} Example: subbridge run -- python app.py",
-        epilog=f"{_RUN_EXIT_CODES}\n\n{_PROXY_NOTE}",
+        epilog=f"{_RUN_EXIT_CODES}\n\n{PROXY_NOTE}",
     )
     _add_port(run)
     run.add_argument("argv", nargs=argparse.REMAINDER, help="The command, after --.")
@@ -119,16 +92,6 @@ def _port(value: str) -> int:
             f"port must be between 0 and 65535, got {port}"
         )
     return port
-
-
-def client_environment(gateway: Gateway) -> dict[str, str]:
-    """The four variables the official SDKs read for their endpoint and key."""
-    return {
-        "ANTHROPIC_BASE_URL": gateway.anthropic_base_url,
-        "ANTHROPIC_API_KEY": gateway.api_key,
-        "OPENAI_BASE_URL": gateway.openai_base_url,
-        "OPENAI_API_KEY": gateway.api_key,
-    }
 
 
 def _start(port: int) -> Gateway | None:
