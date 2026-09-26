@@ -6,7 +6,7 @@ SubBridge is in alpha. Only the latest release on [PyPI](https://pypi.org/projec
 
 | Version | Supported |
 | --- | --- |
-| 0.1.x (latest alpha) | Yes |
+| 0.2.x (latest alpha) | Yes |
 | Anything older | No |
 
 ## Reporting a vulnerability
@@ -21,9 +21,9 @@ You will get an acknowledgement on the report, and it stays private while a fix 
 
 SubBridge's security promises are its defaults, so a way around any of them is in scope:
 
-- Subscription-only mode letting a request use an API key, an endpoint override, or a non-subscription sign-in.
-- A run escaping the Codex `read-only` sandbox or the Claude Code `read-only` mode (Read, Glob, and Grep only) that SubBridge requested.
-- Raw CLI status, events, or stderr appearing in results or error messages without the matching opt-in (`include_raw`, `include_events`, or `include_raw_diagnostics`).
+- Subscription-only mode letting a gateway request use an API key, an endpoint override, or a non-subscription sign-in.
+- A run escaping the Codex `read-only` sandbox or the Claude Code `read-only` mode (Read, Glob, and Grep only) that SubBridge always requests.
+- The CLI's stderr, raw event stream, or raw sign-in status appearing in a gateway response, a gateway error message, or `subbridge doctor` output. The error message the CLI reports for a failed turn, and its version string, are shown by design.
 - A CLI process that keeps running after a timeout, error, or cancellation.
 - Input that makes SubBridge pass unintended flags or arguments to a CLI, including the `model` or message text of a gateway request.
 - The gateway (`subbridge serve`, `subbridge run`, `subbridge.serve()`) accepting connections on any address other than `127.0.0.1`, or sending CORS headers that let a web page read its replies.

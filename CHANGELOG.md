@@ -4,6 +4,8 @@ All notable changes to SubBridge are recorded here. The format follows [Keep a C
 
 ## [Unreleased]
 
+## [0.2.0a1]
+
 ### Added
 
 - A local gateway for the official `anthropic` and `openai` Python SDKs: `subbridge run -- <command>`, `subbridge serve`, and `subbridge.serve()`. Prototype on the subscription your team already has, ship with a real API key. It listens on `127.0.0.1` only, requires a key it generates at each start, and answers `POST /v1/messages` with Claude Code and `POST /v1/chat/completions` and `POST /v1/responses` with Codex, streaming included, within what your plan and your organization's policy allow. Tools, images, and other unsupported parameters are rejected with a 400, and other endpoints with a 404. Tested with anthropic 1.8.0 and openai 3.19.2.
@@ -14,9 +16,19 @@ All notable changes to SubBridge are recorded here. The format follows [Keep a C
 
 - `subbridge` is now a command with `doctor`, `serve`, and `run` subcommands. `subbridge doctor` and `subbridge doctor --json` work as before; `subbridge` alone prints help instead of running the doctor.
 
-- Claude Code now runs in a new `read-only` permission mode by default, replacing `plan`. The model gets only the Read, Glob, and Grep tools and no MCP servers, where plan mode still offered Bash, Edit, and MCP tools and often added remarks about planning to plain answers. Pass `permission_mode="plan"` for the old behavior.
+- Claude Code now always runs in `read-only` mode, replacing `plan`. The model gets only the Read, Glob, and Grep tools and no MCP servers, where plan mode still offered Bash, Edit, and MCP tools and often added remarks about planning to plain answers.
 
 - The package description now says what SubBridge does, and the package lists search keywords.
+
+### Removed
+
+- The native Python API is no longer public: `ClaudeClient`, `CodexClient`, threads, `ask`/`ask_async`, streaming, `TurnResult`, `StreamEvent`, `normalize_event`, and the status and capabilities models. SubBridge is now a local gateway for the official `anthropic` and `openai` SDKs; code written against 0.1.0a1's clients should switch to `subbridge.use_subscription()` and those SDKs.
+
+- `resume_thread()` and the `include_events` option (and the `TurnResult.items`/`.events` fields it filled in) are gone along with the rest of the native API; nothing reachable through the gateway, `subbridge doctor`, or the CLI used them.
+
+- The `subbridge.claude`, `subbridge.codex`, `subbridge.errors`, `subbridge.events`, and `subbridge.models` modules, including their exception classes (`ClaudeNotInstalledError`, `CodexTurnError`, and the rest), are no longer public. The clients remain as internal modules (`subbridge/_claude.py`, `subbridge/_codex.py`, and friends) backing the gateway and `subbridge doctor`.
+
+- The per-call CLI options the gateway, `subbridge doctor`, and the CLI never exposed are removed: Claude Code's permission mode and `effort`; Codex's sandbox mode, approval policy, network access, web search, and reasoning effort; and both providers' extra directories (plus Codex's images). The gateway always runs Claude Code in `read-only` mode and Codex in its `read-only` sandbox, with no configuration to widen either.
 
 ## [0.1.0a1]
 
@@ -37,5 +49,6 @@ First public alpha.
 - Turn errors that keep the CLI's own message next to SubBridge's hint, such as when a usage limit resets.
 - Support for Python 3.11 through 3.14.
 
-[Unreleased]: https://github.com/kunjan-p/subbridge/compare/v0.1.0a1...HEAD
+[Unreleased]: https://github.com/kunjan-p/subbridge/compare/v0.2.0a1...HEAD
+[0.2.0a1]: https://github.com/kunjan-p/subbridge/compare/v0.1.0a1...v0.2.0a1
 [0.1.0a1]: https://github.com/kunjan-p/subbridge/releases/tag/v0.1.0a1

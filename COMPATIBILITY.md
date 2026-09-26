@@ -11,7 +11,7 @@ SubBridge launches the provider CLIs rather than calling provider APIs, so it de
 | Codex | `codex login status`; `codex exec --json` | `codex debug models` catalog |
 | Claude Code | `claude auth status --json`; `claude -p --output-format stream-json --verbose --permission-prompts none`, plus in read-only mode `--permission-mode dontAsk --tools=Read,Glob,Grep --strict-mcp-config --setting-sources user` | None currently queried |
 
-Codex exposes its model catalog through a `debug` command, which may be missing or change between CLI releases. When it is unavailable, `CodexClient.capabilities()` still returns install and sign-in details and reports `models=None`. The catalog lists the models the CLI knows about. It does not show which of them the signed-in account can use or how they are billed. Claude Code has no stable non-interactive model catalog, so SubBridge reports its model list as unavailable.
+Codex exposes its model catalog through a `debug` command, which may be missing or change between CLI releases. When it is unavailable, `subbridge doctor` still reports install and sign-in details, with `cli_known_models` set to `null`. The catalog lists the models the CLI knows about. It does not show which of them the signed-in account can use or how they are billed. Claude Code has no stable non-interactive model catalog, so SubBridge reports its model list as unavailable.
 
 ## Verified CLI versions
 
@@ -46,4 +46,4 @@ python -m pip install -e ".[dev]"
 SUBBRIDGE_RUN_LIVE_TESTS=1 python -m unittest discover -s tests -p 'test_live.py' -v
 ```
 
-The tests use your existing CLI sign-in in subscription-only mode. They inspect local capabilities, then make one short asynchronous model request per provider. The smoke tests default to Haiku and GPT-6 Luna; set `SUBBRIDGE_CLAUDE_MODEL` or `SUBBRIDGE_CODEX_MODEL` to pick another model the CLI supports. Whether your account can use that model still depends on your plan.
+The tests use your existing CLI sign-in in subscription-only mode. They start a gateway and make one short request per provider through it with the official SDKs: Claude Code through the `anthropic` Messages API, Codex through the `openai` Responses API. The smoke tests default to `sonnet` and `gpt-6-luna`; set `SUBBRIDGE_CLAUDE_MODEL` or `SUBBRIDGE_CODEX_MODEL` to pick another model the CLI supports. Whether your account can use that model still depends on your plan.

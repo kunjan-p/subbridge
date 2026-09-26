@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "subbridge"
-version = "0.1.0a1"
-description = "Call Claude Code and Codex from Python through your signed-in CLI subscription, no API key"
-keywords = ["claude", "claude-code", "codex", "anthropic", "openai", "llm", "ai-agents", "cli-wrapper", "subscription", "asyncio"]
+version = "0.2.0a1"
+description = "Prototype with the official Anthropic and OpenAI SDKs on your Claude or ChatGPT subscription, then ship with an API key"
+keywords = ["claude", "claude-code", "codex", "anthropic", "openai", "anthropic-sdk", "openai-sdk", "llm", "gateway", "prototyping", "ai-agents", "cli-wrapper", "subscription"]
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

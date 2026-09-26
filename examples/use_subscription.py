@@ -11,9 +11,10 @@ OPENAI_MODEL to model IDs those APIs accept.
 
 import os
 
-import subbridge
 from anthropic import Anthropic
 from openai import OpenAI
+
+import subbridge
 
 QUESTION = "What is 17 * 23? Return only the number."
 
