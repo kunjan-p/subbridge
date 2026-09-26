@@ -11,8 +11,18 @@ from typing import Any
 from .._process import terminate_process_tree
 from ._errors import GatewayError
 
-_STOP_GRACE_SECONDS = 2.0
+# A turn's `_validate_auth()` (see `_claude_thread.py`/`_codex_thread.py`) runs
+# before any CLI is spawned, and by itself can block for up to two 5-second
+# subprocess calls -- so a turn `close()` catches mid-auth-check may not have
+# a process to kill for several seconds. This deadline must comfortably
+# outlast that worst case, or `close()` could give up and return before the
+# CLI even starts, letting it run past the deleted workdir.
+_STOP_DEADLINE_SECONDS = 15.0
 _STOP_POLL_SECONDS = 0.02
+# Once `_STOP_DEADLINE_SECONDS` is spent, bound how long we wait for each
+# remaining thread to notice its process died and unwind, so `close()` still
+# cannot hang forever on a straggler.
+_STOP_JOIN_SECONDS = 2.0
 
 
 class TurnLifecycle:
@@ -76,10 +86,16 @@ class TurnLifecycle:
         Loops rather than acting on one snapshot: a turn that read `_closing`
         as false just before `begin_closing()` set it can still register
         after this starts, and a turn's `subprocess.Popen` (see
-        `_stream.EventStream.sync`) may not exist yet on the first look. This
-        still has an overall deadline so `close()` cannot hang.
+        `_stream.EventStream.sync`) may not exist yet on the first look --
+        `_validate_auth()` alone can block for several seconds with no
+        process to kill yet. So this keeps polling until `_active_threads` is
+        empty, killing any thread's process the instant one appears, for as
+        long as `_STOP_DEADLINE_SECONDS` (comfortably longer than that worst
+        case), so `close()` cannot hang forever on a CLI that never shows up
+        at all. In the common case -- no turns in flight, or a turn whose CLI
+        is already running -- this returns almost immediately.
         """
-        deadline = time.monotonic() + _STOP_GRACE_SECONDS
+        deadline = time.monotonic() + _STOP_DEADLINE_SECONDS
         killed: set[int] = set()
         while time.monotonic() < deadline:
             with self._lock:
@@ -94,13 +110,14 @@ class TurnLifecycle:
                     terminate_process_tree(process)
                     killed.add(id(thread))
             time.sleep(_STOP_POLL_SECONDS)
-        # A straggler's process was never found, or never finished after
-        # being killed; join what's left with a short bound each so
-        # close() still returns promptly.
+        # Every thread still here either never got a process to kill (stuck
+        # somewhere odd) or its process is slow to die even after being
+        # killed; join what's left with a short bound each so close() still
+        # returns promptly instead of hanging on it.
         with self._lock:
             threads = list(self._active_threads)
         for thread in threads:
-            thread.join(timeout=_STOP_GRACE_SECONDS)
+            thread.join(timeout=_STOP_JOIN_SECONDS)
 
 
 _ERROR_DRAIN_CHUNK = 64 * 1024
