@@ -64,6 +64,12 @@ class DispatchTests(unittest.TestCase):
         for phrase in ("128", "126", "127", "usage error"):
             self.assertIn(phrase, text)
 
+    def test_run_help_mentions_no_proxy(self) -> None:
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaises(SystemExit):
+            cli.main(["run", "--help"])
+        self.assertIn("NO_PROXY", output.getvalue())
+
 
 class PortTests(unittest.TestCase):
     def test_invalid_port_is_a_usage_error(self) -> None:
@@ -145,6 +151,63 @@ class RunTests(unittest.TestCase):
             with mock.patch("sys.stderr", io.StringIO()) as stderr:
                 self.assertEqual(cli.main(["run", "--", directory]), 126)
             self.assertIn("permission denied", stderr.getvalue())
+
+
+_PROXY_ENV_NAMES = (
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+)
+
+
+class ProxyWarningTests(unittest.TestCase):
+    """`subbridge run` and `subbridge serve` warn when a proxy could
+    intercept the gateway's own 127.0.0.1 traffic (I2 fix)."""
+
+    def setUp(self) -> None:
+        # A clean slate: a developer's own shell may already set one of
+        # these, which would make the "quiet" cases below flaky.
+        patcher = mock.patch.dict(os.environ, {}, clear=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for name in _PROXY_ENV_NAMES:
+            os.environ.pop(name, None)
+
+    def test_serve_warns_when_a_proxy_lacks_a_no_proxy_exemption(self) -> None:
+        os.environ["HTTP_PROXY"] = "http://proxy.example:8080"
+        with (
+            mock.patch.object(cli, "_wait_for_interrupt"),
+            redirect_stdout(io.StringIO()),
+            mock.patch("sys.stderr", io.StringIO()) as stderr,
+        ):
+            self.assertEqual(cli.main(["serve"]), 0)
+        self.assertIn("NO_PROXY", stderr.getvalue())
+
+    def test_run_warns_when_a_proxy_lacks_a_no_proxy_exemption(self) -> None:
+        os.environ["https_proxy"] = "http://proxy.example:8080"
+        with mock.patch("sys.stderr", io.StringIO()) as stderr:
+            exit_code = cli.main(["run", "--", sys.executable, "-c", "pass"])
+        self.assertEqual(exit_code, 0)
+        self.assertIn("NO_PROXY", stderr.getvalue())
+
+    def test_no_warning_once_127_0_0_1_is_exempted(self) -> None:
+        os.environ["ALL_PROXY"] = "http://proxy.example:8080"
+        os.environ["NO_PROXY"] = "localhost,127.0.0.1"
+        with mock.patch("sys.stderr", io.StringIO()) as stderr:
+            exit_code = cli.main(["run", "--", sys.executable, "-c", "pass"])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_no_warning_without_any_proxy_variable(self) -> None:
+        with mock.patch("sys.stderr", io.StringIO()) as stderr:
+            exit_code = cli.main(["run", "--", sys.executable, "-c", "pass"])
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(stderr.getvalue(), "")
 
 
 @unittest.skipUnless(os.name == "posix", "process groups and SIGTERM are POSIX-only")

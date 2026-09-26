@@ -112,6 +112,8 @@ Install the SDKs your script uses (`pip install anthropic openai`); SubBridge do
 subbridge run -- python app.py
 ```
 
+If your shell has `HTTP_PROXY`, `HTTPS_PROXY`, or `ALL_PROXY` set, add `127.0.0.1` to `NO_PROXY` too, or the SDKs can send the gateway key and your prompts to that proxy instead of the gateway. `subbridge run` and `subbridge serve` print a warning to stderr when this looks likely.
+
 `app.py` contains no SubBridge code:
 
 ```python
@@ -146,7 +148,7 @@ subbridge run -- python app.py
 
 # Production: the real APIs answer, billed to your API keys. Set CLAUDE_MODEL and
 # OPENAI_MODEL to model IDs the APIs accept.
-ANTHROPIC_API_KEY=sk-ant-... OPENAI_API_KEY=sk-... CLAUDE_MODEL=claude-sonnet-4-5 OPENAI_MODEL=gpt-5 python app.py
+ANTHROPIC_API_KEY=sk-ant-... OPENAI_API_KEY=sk-... CLAUDE_MODEL=<your-anthropic-model-id> OPENAI_MODEL=<your-openai-model-id> python app.py
 ```
 
 There is nothing to comment out. Check the model names: the gateway passes `model` to the CLI's `--model` flag as-is, so short names such as `sonnet` work in the prototype but not with the API. `app.py` reads its model names from `CLAUDE_MODEL` and `OPENAI_MODEL`, the same pattern [`examples/official_sdks.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/official_sdks.py) uses, so set them to model IDs the real APIs accept when you switch.
@@ -186,7 +188,7 @@ Pass `gw.openai_base_url`, which ends in `/v1`, to `openai.OpenAI(base_url=..., 
 
 Each request runs one CLI turn with SubBridge's read-only defaults. The whole conversation in the request is sent to the CLI as one transcript, and the gateway keeps nothing between requests. Parameters not in the table, such as `temperature`, `top_p`, `max_tokens`, `stop`, `seed`, `metadata`, and `user`, are accepted and ignored.
 
-A non-streamed reply carries only the agent's final answer. Errors come back in each API's own error shape, so the SDKs raise their usual exceptions: a usage or rate limit is a 429, a model the CLI does not know is a 404, a model your plan lacks is a 403, a CLI that is missing or signed out, or no free CLI slot, is a 503, a timeout is a 504, and other CLI failures are a 502. Every JSON error response carries `x-should-retry: false`, so the SDKs do not start the CLI again for a call that already failed.
+A non-streamed reply carries only the agent's final answer. Errors come back in each API's own error shape, so the SDKs raise their usual exceptions: a usage or rate limit is a 429, a model the CLI does not know is a 404, a model your plan lacks is a 403, a missing or signed-out CLI, or no free CLI slot, gives a 503, a timeout is a 504, and other CLI failures are a 502. Every JSON error response carries `x-should-retry: false`, so the SDKs do not start the CLI again for a call that already failed.
 
 ### What the gateway can't do
 
@@ -198,7 +200,7 @@ A non-streamed reply carries only the agent's final answer. Errors come back in 
 
 ### Gateway security
 
-The gateway listens on `127.0.0.1` only, with no option to listen on other addresses, and sends no CORS headers. Every request must carry the key the gateway generated, as `x-api-key` or `Authorization: Bearer`; a missing or wrong key gets a 401 before any CLI starts. Software running as your user can read the key, for example from the environment of a `subbridge run` command, as it can any local credential. The CLIs start in an empty temporary directory rather than the directory you ran the command from. That is only a starting point: Codex's read-only sandbox can still read files elsewhere on your machine, and Claude Code follows your own permission settings. Don't send untrusted text through the gateway on a machine with files you wouldn't show the model.
+The gateway listens on `127.0.0.1` only, with no option to listen on other addresses, and sends no CORS headers. Every request must carry the key the gateway generated, as `x-api-key` or `Authorization: Bearer`; a missing or wrong key gets a 401 before any CLI starts. Software running as your user can read the key, for example from the environment of a `subbridge run` command, as it can any local credential. The CLIs start in an empty temporary directory rather than the directory you ran the command from. That is only a starting point: Codex's read-only sandbox can still read files elsewhere on your machine, and Claude Code follows your own permission settings. Don't send untrusted text through the gateway on a machine with files you wouldn't show the model. If `HTTP_PROXY`, `HTTPS_PROXY`, or `ALL_PROXY` is set without `127.0.0.1` in `NO_PROXY`, the SDKs can send requests meant for the gateway, including the key and your prompts, to that proxy instead; `subbridge run` and `subbridge serve` warn about this on startup.
 
 ## `subbridge doctor`
 
