@@ -1,12 +1,13 @@
 import os
 import textwrap
+import time
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
 from subbridge._codex import CodexClient
-from subbridge._codex_thread import CodexThread, ThreadOptions, _schema_file
+from subbridge._codex_thread import _schema_file
 from subbridge._errors import (
     CodexProcessError,
     CodexTurnError,
@@ -57,6 +58,9 @@ def fake_codex(tmp_path: Path, status: str = "Logged in using ChatGPT") -> Path:
                     print("account=/private/sensitive", file=sys.stderr)
                     sys.exit(7)
                 if prompt == "sleep":
+                    import os
+                    with open(__file__ + ".pid", "w") as pid_file:
+                        pid_file.write(str(os.getpid()))
                     time.sleep(2)
                 if prompt == "no-terminal":
                     print(json.dumps({{"type": "item.completed", "item": {{"type": "agent_message", "text": "partial"}}}}), flush=True)
@@ -166,26 +170,33 @@ class CodexClientTests(unittest.TestCase):
         with self.assertRaises(CodexWrongAuthModeError):
             run_turn(client, "hello")
 
-    def test_build_command_uses_current_json_flag_and_resume(self) -> None:
+    def test_build_command_uses_json_flag_and_read_only_sandbox(self) -> None:
         client = CodexClient(codex_path=str(fake_codex(self.tmp_path)))
-        # `resume_thread()` is gone, but resuming an existing conversation
-        # remains a `CodexThread` capability: constructing one with a thread
-        # ID directly exercises the same `_build_command()` resume branch.
-        thread = CodexThread(
-            client=client,
-            thread_id="thread-xyz",
-            options=ThreadOptions(model="test-model", cwd=self.tmp_path),
-        )
+        thread = client.start_thread(model="test-model", cwd=self.tmp_path)
         command = thread._build_command()
         self.assertIn("--json", command)
         self.assertNotIn("--experimental-json", command)
-        self.assertIn("resume", command)
-        self.assertIn("thread-xyz", command)
+        self.assertIn("--sandbox", command)
+        self.assertEqual(command[command.index("--sandbox") + 1], "read-only")
+        self.assertIn("--skip-git-repo-check", command)
+        self.assertNotIn("resume", command)
 
     def test_timeout_stops_the_cli(self) -> None:
         client = CodexClient(codex_path=str(fake_codex(self.tmp_path)))
+        # A slightly more generous timeout than the other timeout tests here,
+        # so the fake CLI reliably reaches the line that records its own PID
+        # before this kills it; it is still far below the 2-second sleep.
         with self.assertRaisesRegex(CodexProcessError, "timed out"):
-            run_turn(client, "sleep", timeout=0.05)
+            run_turn(client, "sleep", timeout=0.3)
+        pid = int((self.tmp_path / "codex.pid").read_text())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.05)
+        self.fail(f"fake codex (pid {pid}) is still running")
 
     def test_protocol_and_plan_failures_are_explicit(self) -> None:
         client = CodexClient(codex_path=str(fake_codex(self.tmp_path)))

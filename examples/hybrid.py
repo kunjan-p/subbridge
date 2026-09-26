@@ -4,11 +4,13 @@ Each pass is a fresh, one-shot request through SubBridge's gateway, made
 with the official anthropic and openai SDKs (Anthropic Messages for Claude,
 OpenAI Responses for Codex). The script explicitly hands prior text to the
 next model; it does not use shared threads, RAG, or application-side
-caching, and the gateway runs every turn in its own empty directory, so no
-model reads or edits this repository. Generated code is reviewed as text
-and never run.
+caching, and the gateway starts every turn in an empty directory with
+read-only tools, so the script never hands the models this repository (the
+CLIs can still read files elsewhere; see the README's Safety and security
+section). Generated code is reviewed as text and never run.
 """
 
+import os
 from typing import NamedTuple
 
 from anthropic import Anthropic
@@ -17,6 +19,9 @@ from openai import OpenAI
 import subbridge
 
 subbridge.use_subscription()  # Deleted in production.
+# Once it is, CLAUDE_MODEL and OPENAI_MODEL below must be real API model
+# IDs the provider accepts, not CLI-only aliases like "haiku" or
+# "gpt-6-luna".
 
 SPEC = """Implement this pure Python helper:
 
@@ -49,7 +54,7 @@ class Reply(NamedTuple):
 
 def ask_claude(prompt: str) -> Reply:
     message = Anthropic().messages.create(
-        model="haiku",
+        model=os.environ.get("CLAUDE_MODEL", "haiku"),
         max_tokens=2000,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -58,7 +63,9 @@ def ask_claude(prompt: str) -> Reply:
 
 
 def ask_codex(prompt: str) -> Reply:
-    response = OpenAI().responses.create(model="gpt-6-luna", input=prompt)
+    response = OpenAI().responses.create(
+        model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"), input=prompt
+    )
     usage = response.usage
     return Reply(response.output_text, usage.input_tokens, usage.output_tokens)
 

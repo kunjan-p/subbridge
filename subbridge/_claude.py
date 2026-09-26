@@ -155,4 +155,4 @@ class ClaudeClient:
         return status
 
     def start_thread(self, **kwargs: Any) -> ClaudeThread:
-        return ClaudeThread(self, None, ClaudeThreadOptions(**kwargs))
+        return ClaudeThread(self, ClaudeThreadOptions(**kwargs))

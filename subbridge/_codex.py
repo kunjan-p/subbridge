@@ -239,8 +239,4 @@ class CodexClient:
 
         options = ThreadOptions(**kwargs)
 
-        return CodexThread(
-            client=self,
-            thread_id=None,
-            options=options,
-        )
+        return CodexThread(client=self, options=options)

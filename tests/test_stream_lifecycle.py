@@ -1,6 +1,7 @@
 """Exercise both clients against real pipes without contacting a provider."""
 
 import json
+import subprocess
 import sys
 import threading
 import time
@@ -153,3 +154,38 @@ class StreamLifecycleTests(unittest.TestCase):
                 )
                 with self.assertRaises(protocol_error):
                     client.start_thread().run("hello", timeout=2)
+
+    def test_close_reaps_process_and_removes_schema(self):
+        """The gateway relies on this: a caller disconnecting mid-stream for
+        a json_schema request must still kill the CLI and clean up the
+        schema tempfile, not leak either.
+        """
+        client = self.client(
+            "codex",
+            CodexClient,
+            'sys.stdin.read()\nprint(\'{"type":"event"}\', flush=True)\ntime.sleep(30)',
+        )
+        captured = {}
+        real_popen = subprocess.Popen
+
+        def capture(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            captured["argv"] = args[0]
+            captured["process"] = process
+            return process
+
+        with patch("subbridge._stream.subprocess.Popen", side_effect=capture):
+            stream = client.start_thread().stream(
+                "hello", output_schema={"type": "object"}, timeout=3
+            )
+            try:
+                next(stream)
+                argv = captured["argv"]
+                schema_path = Path(argv[argv.index("--output-schema") + 1])
+                self.assertTrue(schema_path.exists())
+                self.assertIsNone(captured["process"].poll())
+            finally:
+                stream.close()
+        self.assertIsNotNone(captured["process"].poll())
+        self.assertFalse(schema_path.exists())
+        self.assertFalse(schema_path.parent.exists())

@@ -1,4 +1,4 @@
-"""Collect one turn identically for synchronous and asynchronous callers."""
+"""Collect one CLI turn into a TurnResult."""
 
 from __future__ import annotations
 

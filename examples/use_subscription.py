@@ -4,9 +4,9 @@ Prototype without running `subbridge serve` or `subbridge run` yourself:
 
     python examples/use_subscription.py
 
-In production, set real ANTHROPIC_API_KEY and OPENAI_API_KEY values and
-delete the `subbridge.use_subscription()` line below; nothing else in this
-file needs to change.
+In production, delete the `subbridge.use_subscription()` line below, set
+real ANTHROPIC_API_KEY and OPENAI_API_KEY values, and set CLAUDE_MODEL and
+OPENAI_MODEL to model IDs those APIs accept.
 """
 
 import os

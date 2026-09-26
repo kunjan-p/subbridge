@@ -60,7 +60,9 @@ def fake_claude(
                     print("account=/private/sensitive", file=sys.stderr)
                     sys.exit(7)
                 if prompt == "sleep":
-                    import time
+                    import os, time
+                    with open(__file__ + ".pid", "w") as pid_file:
+                        pid_file.write(str(os.getpid()))
                     time.sleep(2)
                 if prompt == "no-terminal":
                     print(json.dumps({{"type": "assistant", "message": {{"content": [{{"type": "text", "text": "partial"}}]}}}}))
@@ -213,19 +215,12 @@ class ClaudeClientTests(unittest.TestCase):
 
     def test_build_command_uses_supported_cli_flags(self) -> None:
         client = ClaudeClient(claude_path=str(fake_claude(self.tmp_path)))
-        thread = client.start_thread(
-            model="sonnet",
-            effort="high",
-            cwd=self.tmp_path,
-            additional_directories=[self.tmp_path / "extra"],
-        )
+        thread = client.start_thread(model="sonnet", cwd=self.tmp_path)
         command = thread._build_command({"type": "object"})
         self.assertIn("--output-format", command)
         self.assertIn("stream-json", command)
         self.assertIn("--model", command)
         self.assertIn("sonnet", command)
-        self.assertIn("--effort", command)
-        self.assertIn("--permission-mode", command)
         self.assertNotIn("--cwd", command)
         self.assertIn("--json-schema", command)
         self.assertEqual(
@@ -244,19 +239,22 @@ class ClaudeClientTests(unittest.TestCase):
         self.assertIn("--setting-sources", command)
         self.assertEqual(command[command.index("--setting-sources") + 1], "user")
 
-    def test_explicit_mode_passes_through_without_tool_limits(self) -> None:
-        client = ClaudeClient(claude_path=str(fake_claude(self.tmp_path)))
-        for mode in ("plan", "acceptEdits", "dontAsk", "default"):
-            command = client.start_thread(permission_mode=mode)._build_command()
-            self.assertEqual(command[command.index("--permission-mode") + 1], mode)
-            self.assertFalse(any(arg.startswith("--tools") for arg in command))
-            self.assertNotIn("--strict-mcp-config", command)
-            self.assertNotIn("--setting-sources", command)
-
     def test_request_timeout_stops_the_cli(self) -> None:
         client = ClaudeClient(claude_path=str(fake_claude(self.tmp_path)))
+        # A slightly more generous timeout than the other timeout tests here,
+        # so the fake CLI reliably reaches the line that records its own PID
+        # before this kills it; it is still far below the 2-second sleep.
         with self.assertRaisesRegex(ClaudeProcessError, "timed out"):
-            run_turn(client, "sleep", timeout=0.05)
+            run_turn(client, "sleep", timeout=0.3)
+        pid = int((self.tmp_path / "claude.pid").read_text())
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.05)
+        self.fail(f"fake claude (pid {pid}) is still running")
 
     def test_large_prompt_delivery_honors_timeout(self) -> None:
         client = ClaudeClient(
