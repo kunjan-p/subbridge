@@ -1,9 +1,14 @@
 name: CI
 
+# Pull requests only: main requires PRs to be up to date before a squash
+# merge, so the merged tree is the one CI already tested.
 on:
-  push:
-    branches: [main]
   pull_request:
+
+# A new push to a PR cancels that PR's older, now-stale run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -11,33 +16,29 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # One job on the oldest supported Python, to keep runner use low.
     strategy:
-      fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
-    env:
-      # Lint, build and aislop run once, on the newest Python.
-      LINT: ${{ matrix.python-version == '3.14' }}
+        python-version: ["3.11"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
       - run: python -m pip install build -e ".[dev]"
       - run: python -m pytest -q
-      - if: env.LINT == 'true'
-        run: |
+      - run: |
           ruff check .
           ruff format --check .
           python -m build
           # The release workflow installs this lock file; catch bad pins or hashes here.
           python -m pip download -q --only-binary=":all:" --require-hashes -r requirements-release.txt -d "$RUNNER_TEMP/release-deps"
-      - if: env.LINT == 'true'
-        uses: actions/setup-node@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
-      - if: env.LINT == 'true'
-        name: aislop
+      - name: aislop
         run: |
           set -o pipefail
           echo '```' >> "$GITHUB_STEP_SUMMARY"

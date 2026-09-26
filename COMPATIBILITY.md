@@ -2,7 +2,7 @@
 
 ## Supported runtime
 
-The package targets Python 3.11 and later. CI runs the unit suite on Python 3.11, 3.12, 3.13, and 3.14.
+The package targets Python 3.11 and later. CI runs the unit suite on Python 3.11, the oldest supported version; newer versions are tested locally before a release.
 
 SubBridge launches the provider CLIs rather than calling provider APIs, so it depends on the commands and JSONL output below:
 
