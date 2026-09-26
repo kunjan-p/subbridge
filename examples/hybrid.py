@@ -1,13 +1,27 @@
 """A four-pass engineering review loop across Claude Code and Codex.
 
-Each pass is a fresh, one-shot request. The script explicitly hands prior text
-to the next model; it does not use shared threads, repository context, RAG, or
-application-side caching. Generated code is reviewed as text and never run.
+Each pass is a fresh, one-shot request through SubBridge's gateway, made
+with the official anthropic and openai SDKs (Anthropic Messages for Claude,
+OpenAI Responses for Codex). The script explicitly hands prior text to the
+next model; it does not use shared threads, RAG, or application-side
+caching, and the gateway starts every turn in an empty directory with
+read-only tools, so the script never hands the models this repository (the
+CLIs can still read files elsewhere; see the README's Safety and security
+section). Generated code is reviewed as text and never run.
 """
 
-from tempfile import gettempdir
+import os
+from typing import NamedTuple
 
-from subbridge import ClaudeClient, CodexClient, TurnResult
+from anthropic import Anthropic
+from openai import OpenAI
+
+import subbridge
+
+subbridge.use_subscription()  # Deleted in production.
+# Once it is, CLAUDE_MODEL and OPENAI_MODEL below must be real API model
+# IDs the provider accepts, not CLI-only aliases like "haiku" or
+# "gpt-6-luna".
 
 SPEC = """Implement this pure Python helper:
 
@@ -31,26 +45,32 @@ Requirements:
 Return only the complete Python implementation. Do not write files or run code.
 """
 
-# Run every pass outside the repository so no model reads or edits it.
-ISOLATED_CWD = gettempdir()
+
+class Reply(NamedTuple):
+    text: str
+    input_tokens: int
+    output_tokens: int
 
 
-def ask_claude(prompt: str) -> TurnResult:
-    return ClaudeClient().ask(prompt, model="haiku", cwd=ISOLATED_CWD, timeout=120)
-
-
-def ask_codex(prompt: str) -> TurnResult:
-    return CodexClient().ask(
-        prompt,
-        model="gpt-6-luna",
-        reasoning_effort="low",
-        cwd=ISOLATED_CWD,
-        sandbox="read-only",
-        timeout=120,
+def ask_claude(prompt: str) -> Reply:
+    message = Anthropic().messages.create(
+        model=os.environ.get("CLAUDE_MODEL", "haiku"),
+        max_tokens=2000,
+        messages=[{"role": "user", "content": prompt}],
     )
+    text = "".join(block.text for block in message.content if block.type == "text")
+    return Reply(text, message.usage.input_tokens, message.usage.output_tokens)
 
 
-def draft() -> TurnResult:
+def ask_codex(prompt: str) -> Reply:
+    response = OpenAI().responses.create(
+        model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"), input=prompt
+    )
+    usage = response.usage
+    return Reply(response.output_text, usage.input_tokens, usage.output_tokens)
+
+
+def draft() -> Reply:
     """Pass 1: a small model drafts an implementation from a precise contract."""
     return ask_claude(
         "You are implementing a small standard-library utility. "
@@ -58,7 +78,7 @@ def draft() -> TurnResult:
     )
 
 
-def review(candidate: str) -> TurnResult:
+def review(candidate: str) -> Reply:
     """Pass 2: a second provider reviews the draft against the contract."""
     return ask_codex(
         "Act as a skeptical Python reviewer. Review the candidate only as text; "
@@ -70,7 +90,7 @@ def review(candidate: str) -> TurnResult:
     )
 
 
-def revise(candidate: str, notes: str) -> TurnResult:
+def revise(candidate: str, notes: str) -> Reply:
     """Pass 3: the author weighs the critique and fixes valid defects."""
     return ask_claude(
         "Revise the implementation against the original specification. Treat the "
@@ -83,7 +103,7 @@ def revise(candidate: str, notes: str) -> TurnResult:
     )
 
 
-def final_review(candidate: str, prior_notes: str) -> TurnResult:
+def final_review(candidate: str, prior_notes: str) -> Reply:
     """Pass 4: an independent check catches regressions from the revision."""
     return ask_codex(
         "Perform a final independent review of the revised implementation against "
@@ -96,12 +116,8 @@ def final_review(candidate: str, prior_notes: str) -> TurnResult:
     )
 
 
-def show_usage(label: str, result: TurnResult) -> None:
-    usage = result.usage
-    if usage is None:
-        print(f"{label} usage: unavailable")
-        return
-    print(f"{label} usage: input={usage.input_tokens}, output={usage.output_tokens}")
+def show_usage(label: str, reply: Reply) -> None:
+    print(f"{label} usage: input={reply.input_tokens}, output={reply.output_tokens}")
 
 
 def main() -> None:
@@ -116,10 +132,10 @@ def main() -> None:
         ("Pass 3: Claude Haiku revision", "Claude revision", second),
         ("Pass 4: Codex GPT-6 Luna final review", "Codex final", final),
     )
-    for title, _, result in passes:
-        print(f"\n=== {title} ===\n{result.text}")
-    for _, label, result in passes:
-        show_usage(label, result)
+    for title, _, reply in passes:
+        print(f"\n=== {title} ===\n{reply.text}")
+    for _, label, reply in passes:
+        show_usage(label, reply)
 
 
 if __name__ == "__main__":

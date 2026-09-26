@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import signal
 import subprocess
@@ -12,7 +11,6 @@ from queue import Empty, Full, Queue
 from threading import Event, Thread
 from typing import Any, Self
 
-ASYNC_STREAM_LINE_LIMIT = 16 * 1024 * 1024
 SYNC_STREAM_LINE_LIMIT = 16 * 1024 * 1024
 
 
@@ -107,11 +105,10 @@ class SyncProcessIO:
         return "" if line is None else line.decode("utf-8")
 
 
-def classify_provider_failure(provider: str, details: str) -> str | None:
-    lowered = details.lower()
-    if any(
-        term in lowered
-        for term in (
+_FAILURE_TERMS = (
+    (
+        "plan",
+        (
             "not available on your plan",
             "not included in your plan",
             "plan does not include",
@@ -119,32 +116,49 @@ def classify_provider_failure(provider: str, details: str) -> str | None:
             "not entitled",
             "not supported when using codex with a chatgpt account",
             "not available for your account",
-        )
-    ):
-        return f"{provider} rejected the requested model because it appears unavailable on this account plan. Check the provider's model picker or run `subbridge doctor`; plan entitlements cannot always be queried by the CLI."
-    if any(
-        term in lowered
-        for term in (
+        ),
+    ),
+    (
+        "model",
+        (
             "model_not_found",
             "unknown model",
             "invalid model",
             "model not found",
             "unrecognized model",
-        )
-    ):
-        return f"{provider} rejected the requested model name. It may be misspelled, unavailable in this CLI version, or unavailable to this account; run `subbridge doctor` to inspect CLI-known models."
-    if any(
-        term in lowered
-        for term in (
+        ),
+    ),
+    (
+        "rate_limit",
+        (
             "usage limit",
             "rate limit",
             "quota exceeded",
             "capacity limit",
             "limit reached",
-        )
-    ):
-        return f"{provider} reported a usage or rate limit. Check the provider account's usage page; detailed quota data is not exposed consistently by the CLI."
+        ),
+    ),
+)
+
+_FAILURE_HINTS = {
+    "plan": "{provider} rejected the requested model because it appears unavailable on this account plan. Check the provider's model picker or run `subbridge doctor`; plan entitlements cannot always be queried by the CLI.",
+    "model": "{provider} rejected the requested model name. It may be misspelled, unavailable in this CLI version, or unavailable to this account; run `subbridge doctor` to inspect CLI-known models.",
+    "rate_limit": "{provider} reported a usage or rate limit. Check the provider account's usage page; detailed quota data is not exposed consistently by the CLI.",
+}
+
+
+def failure_kind(details: str) -> str | None:
+    """Return "plan", "model", or "rate_limit" when CLI output names that failure."""
+    lowered = details.lower()
+    for kind, terms in _FAILURE_TERMS:
+        if any(term in lowered for term in terms):
+            return kind
     return None
+
+
+def classify_provider_failure(provider: str, details: str) -> str | None:
+    kind = failure_kind(details)
+    return None if kind is None else _FAILURE_HINTS[kind].format(provider=provider)
 
 
 def describe_turn_failure(provider: str, error: str, context: str = "") -> str:
@@ -153,13 +167,6 @@ def describe_turn_failure(provider: str, error: str, context: str = "") -> str:
     classification; it is never shown, keeping raw diagnostics opt-in."""
     hint = classify_provider_failure(provider, f"{error} {context}")
     return f"{hint}\n\n{provider} said: {error}" if hint else error
-
-
-def validate_thread_id(thread_id: str) -> str:
-    """Reject IDs the CLI would parse as flags (for example ``--last``)."""
-    if not isinstance(thread_id, str) or not thread_id or thread_id.startswith("-"):
-        raise ValueError(f"Invalid thread ID: {thread_id!r}")
-    return thread_id
 
 
 def process_group_options() -> dict[str, Any]:
@@ -192,28 +199,6 @@ def terminate_process_tree(process: subprocess.Popen[Any]) -> None:
             process.kill()
     with suppress(OSError):
         process.wait(timeout=5)
-
-
-async def terminate_async_process_tree(process: asyncio.subprocess.Process) -> None:
-    if os.name == "posix":
-        with suppress(ProcessLookupError, PermissionError):
-            os.killpg(process.pid, signal.SIGKILL)
-    elif process.returncode is not None:
-        return
-    elif os.name == "nt":
-        with suppress(OSError, subprocess.SubprocessError):
-            await asyncio.to_thread(
-                subprocess.run,
-                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                capture_output=True,
-                check=False,
-                timeout=5,
-            )
-    if process.returncode is None:
-        with suppress(ProcessLookupError):
-            process.kill()
-    with suppress(ProcessLookupError):
-        await process.wait()
 
 
 def process_error_message(

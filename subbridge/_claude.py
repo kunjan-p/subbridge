@@ -4,35 +4,15 @@ import json
 import os
 import shutil
 import subprocess
-from pathlib import Path
 from typing import Any
 
-from ._claude_thread import (
-    ClaudePermissionMode,
-    ClaudeThread,
-    ClaudeThreadOptions,
-)
-from ._process import validate_thread_id
-from .errors import (
+from ._claude_thread import ClaudeThread, ClaudeThreadOptions
+from ._errors import (
     ClaudeNotAuthenticatedError,
     ClaudeNotInstalledError,
-    ClaudeProcessError,
-    ClaudeProtocolError,
-    ClaudeTurnError,
     ClaudeWrongAuthModeError,
 )
-from .models import ClaudeStatus, ProviderCapabilities, TurnResult
-
-# Re-exported so pre-split import paths keep working.
-__all__ = [
-    "ClaudeClient",
-    "ClaudePermissionMode",
-    "ClaudeProcessError",
-    "ClaudeProtocolError",
-    "ClaudeThread",
-    "ClaudeThreadOptions",
-    "ClaudeTurnError",
-]
+from ._models import ClaudeStatus, ProviderCapabilities
 
 
 class ClaudeClient:
@@ -175,63 +155,4 @@ class ClaudeClient:
         return status
 
     def start_thread(self, **kwargs: Any) -> ClaudeThread:
-        return ClaudeThread(self, None, ClaudeThreadOptions(**kwargs))
-
-    def resume_thread(self, thread_id: str, **kwargs: Any) -> ClaudeThread:
-        return ClaudeThread(
-            self, validate_thread_id(thread_id), ClaudeThreadOptions(**kwargs)
-        )
-
-    def ask(
-        self,
-        prompt: str,
-        *,
-        model: str | None = None,
-        effort: str | None = None,
-        cwd: str | Path | None = None,
-        additional_directories: list[str | Path] | None = None,
-        permission_mode: ClaudePermissionMode = "read-only",
-        output_schema: dict[str, Any] | None = None,
-        timeout: float | None = 300,
-        include_events: bool = False,
-    ) -> TurnResult:
-        thread = self.start_thread(
-            model=model,
-            effort=effort,
-            cwd=cwd,
-            additional_directories=additional_directories,
-            permission_mode=permission_mode,
-        )
-        return thread.run(
-            prompt,
-            output_schema=output_schema,
-            timeout=timeout,
-            include_events=include_events,
-        )
-
-    async def ask_async(
-        self,
-        prompt: str,
-        *,
-        model: str | None = None,
-        effort: str | None = None,
-        cwd: str | Path | None = None,
-        additional_directories: list[str | Path] | None = None,
-        permission_mode: ClaudePermissionMode = "read-only",
-        output_schema: dict[str, Any] | None = None,
-        timeout: float | None = 300,
-        include_events: bool = False,
-    ) -> TurnResult:
-        thread = self.start_thread(
-            model=model,
-            effort=effort,
-            cwd=cwd,
-            additional_directories=additional_directories,
-            permission_mode=permission_mode,
-        )
-        return await thread.run_async(
-            prompt,
-            output_schema=output_schema,
-            timeout=timeout,
-            include_events=include_events,
-        )
+        return ClaudeThread(self, ClaudeThreadOptions(**kwargs))

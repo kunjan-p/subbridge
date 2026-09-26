@@ -1,6 +1,6 @@
 import unittest
 
-from subbridge import normalize_event
+from subbridge._events import normalize_event
 
 
 class EventNormalizationTests(unittest.TestCase):
