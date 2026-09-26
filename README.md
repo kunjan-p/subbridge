@@ -1,10 +1,16 @@
 # SubBridge
 
-SubBridge lets Python code call Claude Code and Codex through the CLIs you have already signed in to, so requests go through your Claude.ai or ChatGPT subscription rather than an API key.
+SubBridge lets you use the official `anthropic` and `openai` Python SDKs through the Claude Code and Codex CLIs you are already signed in to, so requests go through your Claude.ai or ChatGPT subscription instead of an API key.
 
-It runs the official `claude` and `codex` command-line tools on your machine and adds a small Python API for one-shot prompts, resumable conversations, streaming events, and async code. It has no runtime dependencies.
+![use_subscription() with the official anthropic SDK](https://raw.githubusercontent.com/kunjan-p/subbridge/main/assets/subbridge-sdk-demo.gif)
 
 > SubBridge is alpha software. Read [Limitations](#limitations) before depending on it.
+
+## Why
+
+Getting an API key at your organization often means a ticket, an approval, and a key that can be revoked later. SubBridge lets you prototype a prompt or a flow today, on the subscription your team already has, within your plan and your organization's policy. When it works, ship the same code with a real API key.
+
+Claude Pro, Max, and Enterprise seats work through Claude Code's Claude.ai sign-in (the maintainer has tested an Enterprise seat). Codex works with a ChatGPT sign-in. Other plans have not been tested.
 
 ## Install
 
@@ -12,7 +18,7 @@ It runs the official `claude` and `codex` command-line tools on your machine and
 python -m pip install subbridge
 ```
 
-You also need Python 3.11+ and at least one of the official CLIs, installed and signed in separately. SubBridge does not bundle or install them.
+You need Python 3.11+ and at least one of the official CLIs, installed and signed in separately. SubBridge does not bundle or install them.
 
 | Provider | CLI | Sign in with |
 | --- | --- | --- |
@@ -22,103 +28,140 @@ You also need Python 3.11+ and at least one of the official CLIs, installed and 
 Check your setup without sending a prompt:
 
 ```bash
-subbridge doctor
-```
-
-## Quick start
-
-```python
-from subbridge import ClaudeClient, CodexClient
-
-claude = ClaudeClient().ask("What is 17 * 23? Return only the number.", model="haiku")
-print(claude.text)
-
-codex = CodexClient().ask("What is 17 * 23? Return only the number.")
-print(codex.text, codex.usage)
-```
-
-Keep context across turns with a thread:
-
-```python
-from subbridge import CodexClient
-
-thread = CodexClient().start_thread(model="gpt-6-luna")
-thread.run("My project is a CNC controller.")
-print(thread.run("What project did I just mention?").text)
-
-# Later, even in another process:
-resumed = CodexClient().resume_thread(thread.id)
-```
-
-## API at a glance
-
-Both clients have the same methods. Their options differ and follow the table.
-
-| Call | What it does |
-| --- | --- |
-| `client.ask(prompt, ...)` / `await client.ask_async(prompt, ...)` | One prompt, returns a `TurnResult` |
-| `client.start_thread(...)` / `client.resume_thread(thread_id, ...)` | A conversation that keeps context |
-| `thread.run(prompt)` / `await thread.run_async(prompt)` | Send a turn, return a `TurnResult` |
-| `thread.stream(prompt)` / `thread.stream_async(prompt)` | Yield the CLI's raw JSON events |
-| `thread.stream_normalized(prompt)` / `thread.stream_normalized_async(prompt)` | Yield provider-neutral `StreamEvent`s |
-| `client.status()` | Installed, signed in, auth mode, CLI version |
-| `client.capabilities()` | `status()` plus CLI-known models and plan, without a model request |
-
-`TurnResult` fields: `text`, `thread_id`, `usage` (`Usage` token counts), `provider`, `model`, `elapsed_seconds`, `structured_output`, plus `events` and `items` when you pass `include_events=True`.
-
-Every turn call accepts `timeout` (seconds, default `300`, `None` for no limit) and `output_schema` (a JSON Schema dict). With a schema, Claude returns the parsed object in `structured_output`; Codex returns the schema-shaped JSON in `text`.
-
-Claude Code accepts `model`, `effort`, `cwd`, `additional_directories`, and `permission_mode` (`"read-only"` by default; also Claude Code's own `"plan"`, `"default"`, `"acceptEdits"`, and `"dontAsk"`).
-
-Codex accepts `model`, `reasoning_effort`, `sandbox` (`"read-only"` by default; also `"workspace-write"`, `"danger-full-access"`), `cwd`, `approval_policy`, `network_access`, `web_search`, `additional_directories`, and `skip_git_repo_check` (default `True`). Its turn calls also take `images`.
-
-Every exception derives from `subbridge.errors.SubBridgeError`. Each provider has its own `NotInstalled`, `NotAuthenticated`, `WrongAuthMode`, `Process` (exit or timeout), `Turn` (the model turn failed, for example a usage limit), and `Protocol` (unexpected CLI output) errors, such as `ClaudeTurnError` and `CodexProcessError`.
-
-### Async and cancellation
-
-```python
-import asyncio
-from subbridge import ClaudeClient, CodexClient
-
-
-async def main() -> None:
-    claude, codex = await asyncio.gather(
-        ClaudeClient().ask_async("Define idempotent in one line.", model="haiku"),
-        CodexClient().ask_async("Define idempotent in one line.", model="gpt-6-luna"),
-    )
-    print(claude.text, codex.text, sep="\n")
-
-
-asyncio.run(main())
-```
-
-Cancelling the task kills the CLI's whole process group, including anything the CLI started.
-
-## `subbridge doctor`
-
-```bash
 subbridge doctor          # readable summary
 subbridge doctor --json   # machine-readable
 ```
 
-For each provider it reports whether the CLI is installed and signed in, the auth mode, the CLI version, the plan (when the CLI exposes one), and the models the CLI knows about. It never sends a prompt. `cli_known_models` is what the CLI lists, not what your plan allows.
+For each provider it reports whether the CLI is installed and signed in, the auth mode, the CLI version, the plan (when the CLI exposes one), and the models the CLI knows about. `cli_known_models` is what the CLI lists, not what your plan allows.
 
-## Safety defaults
+To use the official SDKs through the gateway (below), also run `pip install anthropic openai`. SubBridge itself has no runtime dependencies.
 
-The defaults stop a script from spending API credits or editing your files unless you opt in.
+## Use the official SDKs
 
-- Subscription-only mode is on. Before starting a CLI, SubBridge removes `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, and `ANTHROPIC_BASE_URL` (Claude), or `OPENAI_API_KEY`, `CODEX_API_KEY`, and `OPENAI_BASE_URL` (Codex), from its environment. It then refuses to run unless the CLI reports Claude.ai or ChatGPT sign-in. Pass `subscription_only=False` to allow API keys, proxies, Bedrock, or Vertex.
-- Codex runs in its `read-only` sandbox. Claude Code runs in SubBridge's `read-only` mode: the model gets only the Read, Glob, and Grep tools and no MCP servers, and settings from the working directory, such as a cloned repository's hooks, are ignored. Hooks and plugins from your own user settings still run. Permission prompts are off, so a run never stops to wait for input.
-- `status()` omits the raw CLI output unless you pass `include_raw=True`. Turn results omit raw events unless you pass `include_events=True`. Error messages omit the CLI's stderr unless the client is created with `include_raw_diagnostics=True`. Raw output can contain prompts, file paths, and account details.
-- Timeouts, errors, Ctrl+C, and cancelled tasks kill the whole CLI process group, so no CLI process outlives your script.
+### One line in your script
 
-SubBridge never reads credential files; the CLIs handle sign-in.
+Call `subbridge.use_subscription()` before constructing `Anthropic()` or `OpenAI()`, not after: both SDKs read their base URL and key once, at construction, from environment variables it sets.
+
+```python
+import os
+
+import subbridge
+
+subbridge.use_subscription()
+
+from anthropic import Anthropic
+from openai import OpenAI
+
+claude = Anthropic().messages.create(
+    model=os.environ.get("CLAUDE_MODEL", "sonnet"),
+    max_tokens=500,
+    messages=[{"role": "user", "content": "Name one prime number."}],
+)
+codex = OpenAI().responses.create(
+    model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"), input="Name one prime number."
+)
+print(claude.content[0].text, codex.output_text)
+```
+
+It is one gateway for the whole process, not one per caller. Closing it, including by leaving a `with subbridge.use_subscription():` block, closes it for any other code in the process still relying on it.
+
+### Or wrap the command, no code changes
+
+```bash
+subbridge run -- python app.py
+```
+
+This is the script above without its two `subbridge` lines. `run` sets exactly `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_API_KEY` for that one command, and stops the gateway when it exits. Ctrl+C and SIGTERM (macOS and Linux) go to the command, not the gateway; `run` exits with the command's own exit code. See `subbridge run --help` for the exit codes of other outcomes, such as a command not found or a port already in use.
+
+### Or run it yourself
+
+```bash
+subbridge serve              # picks an available port
+subbridge serve --port 8765
+```
+
+Runs in the foreground and stops on Ctrl+C. Prints the base URLs, the key, and `export` lines to paste into another terminal. The key changes every time the gateway starts. From Python:
+
+```python
+import subbridge
+from anthropic import Anthropic
+
+with subbridge.serve() as gw:
+    client = Anthropic(base_url=gw.anthropic_base_url, api_key=gw.api_key)
+    reply = client.messages.create(
+        model="sonnet", max_tokens=500, messages=[{"role": "user", "content": "hi"}]
+    )
+    print(reply.content[0].text)
+```
+
+Pass `gw.openai_base_url` (ends in `/v1`) to `openai.OpenAI(base_url=..., api_key=gw.api_key)`. `subbridge.serve(port=0, max_concurrency=4, timeout=300)` runs the gateway in a background thread: port `0` picks an available port, at most `max_concurrency` CLI turns run at once, extra requests wait up to `timeout` seconds for a slot to open, and each turn is stopped after `timeout` seconds. Closing the gateway, however you close it, stops any CLI turn still in flight. Call `gw.close()` when you do not use `with`.
+
+### Going to production
+
+Delete the `subbridge.use_subscription()` line (or drop `subbridge run`), set a real `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, and set `CLAUDE_MODEL` / `OPENAI_MODEL` to model IDs the real APIs accept. The gateway passes `model` to the CLI's `--model` flag as-is, so short names like `sonnet` work only in the prototype:
+
+```bash
+# Prototype: your signed-in CLIs answer through the local gateway; app.py's default model names work here.
+subbridge run -- python app.py
+
+# Production: the real APIs answer, billed to your API keys.
+ANTHROPIC_API_KEY=sk-ant-... OPENAI_API_KEY=sk-... CLAUDE_MODEL=<your-anthropic-model-id> OPENAI_MODEL=<your-openai-model-id> python app.py
+```
+
+With `subbridge run` there is nothing to comment out; `app.py` reads its model names from `CLAUDE_MODEL` and `OPENAI_MODEL` either way, the pattern [`examples/official_sdks.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/official_sdks.py) uses.
+
+### What the gateway supports
+
+| Endpoint | Answered by | Works | Rejected with a 400 |
+| --- | --- | --- | --- |
+| `POST /v1/messages` | Claude Code | `messages.create`, `messages.stream`, `stream=True`, `system`, text content | `tools`, `tool_choice`, `mcp_servers`, `container`, image and document blocks, structured output (`output_config.format`) |
+| `POST /v1/chat/completions` | Codex | `chat.completions.create`, `stream=True`, `chat.completions.parse`, `response_format` with `json_schema`, `system` and `developer` messages | `tools`, `tool_choice`, `functions`, `function_call`, `audio`, `n` above 1, image and audio parts, `response_format` of type `json_object` |
+| `POST /v1/responses` | Codex | `responses.create`, `responses.stream`, `stream=True`, `responses.parse`, `text.format` with `json_schema`, `instructions`, text or message `input` | `tools`, `tool_choice`, `previous_response_id`, `conversation`, `prompt`, `background`, image and file inputs, `text.format` of type `json_object` |
+
+- Each request runs one CLI turn with SubBridge's read-only defaults.
+- The whole conversation in the request is sent to the CLI as one transcript. The gateway keeps nothing between requests.
+- Parameters not in the table, such as `temperature`, `top_p`, `max_tokens`, `stop`, `seed`, `metadata`, and `user`, are accepted and ignored.
+- A non-streamed reply carries only the final answer.
+- Errors come back in each API's own error shape, so the SDKs raise their usual exceptions:
+
+| Cause | Status |
+| --- | --- |
+| Usage or rate limit | 429 |
+| Model the CLI does not know | 404 |
+| Model your plan lacks | 403 |
+| CLI missing, signed out, or no turn slot open | 503 |
+| Timeout | 504 |
+| Other CLI failure | 502 |
+| Endpoint other than the three above | 404 |
+| Missing or wrong gateway key | 401 |
+
+Every JSON error response carries `x-should-retry: false`, so the SDKs do not start the CLI again for a call that already failed.
+
+### What it can't do
+
+- Embeddings, fine-tuning, batches, files, audio (speech or transcription), moderation, or any endpoint other than the three above.
+- Custom tools or function calling. The CLI's agent has only its own read-only tools.
+- Images, documents, or audio in a request, for either provider.
+- Sampling control and output parity with the API. `temperature`, `max_tokens`, and similar parameters are ignored, and Claude Code and Codex add their own agent behavior. A prototype that works through the gateway shows your prompt and flow work; it does not promise the same output from the API in production.
+- API speed. Each request starts a CLI process, which takes seconds. Streaming arrives in larger pieces than from the API, because the CLIs emit whole messages: a plain-text stream can include the agent's interim messages, each separated by a blank line, before its final answer, and a stream with a JSON schema (`response_format` with `json_schema`, or `text.format`) waits out the whole turn and delivers only the final answer.
+
+## Safety and security
+
+- **Subscription-only mode is always on.** Before starting a CLI, the gateway removes `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, and `ANTHROPIC_BASE_URL` (Claude), or `OPENAI_API_KEY`, `CODEX_API_KEY`, and `OPENAI_BASE_URL` (Codex), from its environment, then refuses to run unless the CLI reports Claude.ai or ChatGPT sign-in. There is no option to turn this off.
+- **Read-only, always.** Codex always runs in its `read-only` sandbox, and Claude Code always runs in SubBridge's `read-only` mode: the model gets only the Read, Glob, and Grep tools and no MCP servers, and settings from the working directory, such as a cloned repository's hooks, are ignored. Hooks and plugins from your own user settings still run. Permission prompts are off, so a turn never stops to wait for input.
+- **CLI diagnostics stay private.** Replies carry only the parsed answer. Error messages carry SubBridge's description of the failure plus the error message the CLI itself reported (for example, when a usage limit resets). The CLI's stderr, raw event stream, and raw sign-in status never appear. `subbridge doctor` reports install status, the CLI's version string, sign-in mode, and the model catalog, and no other raw CLI output.
+- **Cleanup is automatic.** A turn that times out, and any turn still in flight when the gateway closes, has its whole CLI process group killed, so no CLI process outlives the gateway.
+- **The gateway is local-only.** It listens on `127.0.0.1` only, with no option to listen elsewhere, and sends no CORS headers. Every request needs the key the gateway generated, as `x-api-key` or `Authorization: Bearer`; a missing or wrong key gets a 401 before any CLI starts. Software running as your own user can read the key, for example from the environment of a `subbridge run` command, the same as it can any local credential.
+- **The CLIs can still read files.** They start in an empty temporary directory rather than the one you ran the command from, but that is only a starting point, not a sandbox boundary: Codex's read-only sandbox can still read files elsewhere on your machine, and Claude Code follows your own permission settings. Do not send untrusted text through SubBridge on a machine with files you would not show the model.
+- **Watch your proxy settings.** If `HTTP_PROXY`, `HTTPS_PROXY`, or `ALL_PROXY` is set, add `127.0.0.1` to `NO_PROXY`, or the SDKs may send the gateway key and your prompts to that proxy instead of the gateway. `subbridge run`, `subbridge serve`, and `subbridge.use_subscription()` warn about this on startup.
+- SubBridge never reads credential files; the CLIs handle sign-in.
+
+See [SECURITY.md](https://github.com/kunjan-p/subbridge/blob/main/SECURITY.md) to report a vulnerability.
 
 ## Limitations
 
 - SubBridge depends on the CLIs' command-line flags and JSON event formats, which can change between CLI releases. [COMPATIBILITY.md](https://github.com/kunjan-p/subbridge/blob/main/COMPATIBILITY.md) lists the CLI contract and the last live-verified versions.
 - A signed-in CLI does not guarantee that your plan includes a model or that you have quota left. When a request is refused, the error includes the CLI's own message, such as when a usage limit resets.
-- `TurnResult.usage` counts the tokens of one turn. The CLIs do not report how much of your plan quota remains.
 - Model aliases like `haiku` and `gpt-6-luna` work only if your CLI version and plan offer them.
 - Each call starts the CLI with your own configuration. Claude Code runs your hooks and loads your plugins every time, which can add seconds to each request, and a hook that injects text can change the reply.
 
@@ -128,23 +171,11 @@ Runnable scripts live in [`examples/`](https://github.com/kunjan-p/subbridge/tre
 
 | Script | Shows |
 | --- | --- |
-| [`claude_haiku.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/claude_haiku.py), [`codex_luna.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/codex_luna.py) | One quick prompt per provider |
-| [`conversation.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/conversation.py) | A multi-turn Codex thread |
-| [`streaming.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/streaming.py), [`claude_streaming.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/claude_streaming.py) | Raw event streaming |
-| [`async_clients.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/async_clients.py) | Both providers concurrently with asyncio |
-| [`hybrid.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/hybrid.py) | A review loop: Claude drafts code, Codex reviews it, Claude revises, Codex checks the revision |
+| [`official_sdks.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/official_sdks.py) | The official `anthropic` and `openai` SDKs through the gateway (`pip install anthropic openai` first): `subbridge run -- python examples/official_sdks.py` |
+| [`use_subscription.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/use_subscription.py) | The same SDKs with `subbridge.use_subscription()` instead, so no wrapper command is needed |
+| [`hybrid.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/hybrid.py) | A review loop through the SDKs: Claude drafts code, Codex reviews it, Claude revises, Codex checks the revision |
 
-From a clone of this repository:
-
-```bash
-python examples/claude_haiku.py
-```
-
-The hybrid example passes text between one-shot calls only. It does not share threads, read your repository, or run the generated code.
-
-## Roadmap
-
-Planned work includes an agent guide, custom Python tools for agents, and per-action approval. See [ROADMAP.md](https://github.com/kunjan-p/subbridge/blob/main/ROADMAP.md).
+From a clone of this repository, run one directly: `python examples/use_subscription.py`. The hybrid example passes text between one-shot calls only; it does not share threads or run the generated code, and the script itself does not read your repository.
 
 ## Development
 
@@ -153,7 +184,7 @@ python -m pip install -e ".[dev]"
 python -m pytest
 ```
 
-The test suite uses fake CLI scripts, so it is free and runs offline. Two live smoke tests make one short request per provider through your signed-in CLIs; they are skipped unless you opt in:
+The test suite uses fake CLI scripts, so it runs offline without contacting a real CLI. Two live smoke tests start a gateway and make one short request per provider through it, using the official SDKs; they are skipped unless you opt in:
 
 ```bash
 SUBBRIDGE_RUN_LIVE_TESTS=1 python -m pytest tests/test_live.py -v
@@ -161,7 +192,7 @@ SUBBRIDGE_RUN_LIVE_TESTS=1 python -m pytest tests/test_live.py -v
 
 Set `SUBBRIDGE_CLAUDE_MODEL` or `SUBBRIDGE_CODEX_MODEL` to test other models.
 
-Contributions are welcome. [CONTRIBUTING.md](https://github.com/kunjan-p/subbridge/blob/main/CONTRIBUTING.md) covers setup, tests, and pull requests, and [CHANGELOG.md](https://github.com/kunjan-p/subbridge/blob/main/CHANGELOG.md) lists what changed in each release.
+Planned work includes tool calling, image and document input, and more request features through the gateway; see [ROADMAP.md](https://github.com/kunjan-p/subbridge/blob/main/ROADMAP.md). Contributions are welcome: [CONTRIBUTING.md](https://github.com/kunjan-p/subbridge/blob/main/CONTRIBUTING.md) covers setup, tests, and pull requests, and [CHANGELOG.md](https://github.com/kunjan-p/subbridge/blob/main/CHANGELOG.md) lists what changed in each release.
 
 ## License
 

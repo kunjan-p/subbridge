@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "subbridge"
-version = "0.1.0a1"
-description = "Call Claude Code and Codex from Python through your signed-in CLI subscription, no API key"
-keywords = ["claude", "claude-code", "codex", "anthropic", "openai", "llm", "ai-agents", "cli-wrapper", "subscription", "asyncio"]
+version = "0.2.0a1"
+description = "Prototype with the official Anthropic and OpenAI SDKs on your Claude or ChatGPT subscription, then ship with an API key"
+keywords = ["claude", "claude-code", "codex", "anthropic", "openai", "anthropic-sdk", "openai-sdk", "llm", "gateway", "prototyping", "ai-agents", "cli-wrapper", "subscription"]
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -31,6 +31,8 @@ subbridge = ["py.typed"]
 dev = [
     "pytest==9.1.1",
     "ruff==0.16.9",
+    "anthropic==1.8.0",
+    "openai==3.19.2",
 ]
 
 [project.urls]
@@ -40,4 +42,4 @@ Issues = "https://github.com/kunjan-p/subbridge/issues"
 Changelog = "https://github.com/kunjan-p/subbridge/blob/main/CHANGELOG.md"
 
 [project.scripts]
-subbridge = "subbridge.doctor:main"
+subbridge = "subbridge.cli:main"

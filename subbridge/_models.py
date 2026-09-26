@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal
 
 ProviderName = Literal["claude", "codex"]
@@ -93,8 +93,6 @@ class TurnResult:
     text: str
     thread_id: str | None
     usage: Usage | None
-    items: list[dict[str, Any]] = field(default_factory=list)
-    events: list[dict[str, Any]] = field(default_factory=list)
     provider: ProviderName | None = None
     model: str | None = None
     elapsed_seconds: float | None = None

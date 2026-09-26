@@ -24,11 +24,13 @@ ruff check .
 ruff format --check .
 ```
 
-`ruff format .` fixes formatting, and `ruff check --fix .` fixes most lint findings. The dev extra pins the ruff version so everyone gets the same rules.
+`ruff format .` fixes formatting, and `ruff check --fix .` fixes most lint findings. The dev extra pins the ruff version so everyone gets the same rules. CI also runs `npx --yes aislop@0.16.1 ci .` (it needs Node.js) and expects a score of 100.
 
 ## How the tests work
 
 The unit tests never contact a model. They write small fake `claude` and `codex` scripts that print the JSON events a real CLI would, then point the clients at them. `fake_claude` in `tests/test_claude.py` and `fake_codex` in `tests/test_codex.py` show the pattern. Test new behavior the same way, including its failure paths.
+
+The gateway tests (`tests/test_gateway_*.py`) put those fake CLIs on `PATH`, start a gateway, and call it with the official `anthropic` and `openai` SDKs, which the `dev` extra pins. `tests/gateway_support.py` sets this up; reuse its `GatewayTestCase` for new gateway tests.
 
 The live smoke tests in `tests/test_live.py` use your signed-in CLIs and your subscription quota, so they only run when you opt in:
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 
-from .claude import ClaudeClient
-from .codex import CodexClient
+from ._claude import ClaudeClient
+from ._codex import CodexClient
 
 
 def collect_doctor_report() -> dict[str, dict]:
@@ -36,29 +36,13 @@ def collect_doctor_report() -> dict[str, dict]:
     return report
 
 
-def main() -> int:
-    import sys
-
-    if len(sys.argv) > 1 and sys.argv[1] == "doctor":
-        sys.argv.pop(1)
-    parser = argparse.ArgumentParser(
-        prog="subbridge doctor",
-        description="Check local provider CLI, login, model catalog, and plan/usage visibility.",
-    )
-    parser.add_argument(
-        "--json", action="store_true", help="Print machine-readable JSON."
-    )
-    args = parser.parse_args()
+def print_report(as_json: bool = False) -> int:
+    """Print the doctor report and return the command's exit code."""
     report = collect_doctor_report()
-    if args.json:
+    ready = all(info["installed"] and info["authenticated"] for info in report.values())
+    if as_json:
         print(json.dumps(report, indent=2))
-        return (
-            0
-            if all(
-                info["installed"] and info["authenticated"] for info in report.values()
-            )
-            else 1
-        )
+        return 0 if ready else 1
     for name, info in report.items():
         print(f"{name.title()}")
         print(
@@ -82,11 +66,19 @@ def main() -> int:
         )
         if info["error"]:
             print(f"  Diagnostic: {info['error']}")
-    return (
-        0
-        if all(info["installed"] and info["authenticated"] for info in report.values())
-        else 1
+    return 0 if ready else 1
+
+
+def main() -> int:
+    """Entry point for ``python -m subbridge.doctor``."""
+    parser = argparse.ArgumentParser(
+        prog="subbridge doctor",
+        description="Check local provider CLI, login, model catalog, and plan/usage visibility.",
     )
+    parser.add_argument(
+        "--json", action="store_true", help="Print machine-readable JSON."
+    )
+    return print_report(parser.parse_args().json)
 
 
 if __name__ == "__main__":

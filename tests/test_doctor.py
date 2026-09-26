@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import patch
 
+from subbridge._models import ProviderCapabilities
 from subbridge.doctor import collect_doctor_report
-from subbridge.models import ProviderCapabilities
 
 
 class DoctorTests(unittest.TestCase):

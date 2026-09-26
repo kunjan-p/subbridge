@@ -4,41 +4,15 @@ import json
 import os
 import shutil
 import subprocess
-from pathlib import Path
 from typing import Any
 
-from ._codex_thread import (
-    ApprovalPolicy,
-    CodexThread,
-    ReasoningEffort,
-    SandboxMode,
-    ThreadOptions,
-    WebSearchMode,
-)
-from ._process import validate_thread_id
-from .errors import (
+from ._codex_thread import CodexThread, ThreadOptions
+from ._errors import (
     CodexNotAuthenticatedError,
     CodexNotInstalledError,
-    CodexProcessError,
-    CodexProtocolError,
-    CodexTurnError,
     CodexWrongAuthModeError,
 )
-from .models import CodexStatus, ModelInfo, ProviderCapabilities, TurnResult
-
-# Re-exported so pre-split import paths keep working.
-__all__ = [
-    "ApprovalPolicy",
-    "CodexClient",
-    "CodexProcessError",
-    "CodexProtocolError",
-    "CodexThread",
-    "CodexTurnError",
-    "ReasoningEffort",
-    "SandboxMode",
-    "ThreadOptions",
-    "WebSearchMode",
-]
+from ._models import CodexStatus, ModelInfo, ProviderCapabilities
 
 
 class CodexClient:
@@ -265,98 +239,4 @@ class CodexClient:
 
         options = ThreadOptions(**kwargs)
 
-        return CodexThread(
-            client=self,
-            thread_id=None,
-            options=options,
-        )
-
-    def resume_thread(
-        self,
-        thread_id: str,
-        **kwargs: Any,
-    ) -> CodexThread:
-
-        options = ThreadOptions(**kwargs)
-
-        return CodexThread(
-            client=self,
-            thread_id=validate_thread_id(thread_id),
-            options=options,
-        )
-
-    def ask(
-        self,
-        prompt: str,
-        *,
-        model: str | None = None,
-        reasoning_effort: ReasoningEffort | None = None,
-        sandbox: SandboxMode = "read-only",
-        cwd: str | Path | None = None,
-        skip_git_repo_check: bool = True,
-        approval_policy: ApprovalPolicy | None = None,
-        network_access: bool | None = None,
-        web_search: WebSearchMode | None = None,
-        additional_directories: list[str | Path] | None = None,
-        images: list[str | Path] | None = None,
-        output_schema: dict[str, Any] | None = None,
-        timeout: float | None = 300,
-        include_events: bool = False,
-    ) -> TurnResult:
-
-        thread = self.start_thread(
-            model=model,
-            reasoning_effort=reasoning_effort,
-            sandbox=sandbox,
-            cwd=cwd,
-            skip_git_repo_check=skip_git_repo_check,
-            approval_policy=approval_policy,
-            network_access=network_access,
-            web_search=web_search,
-            additional_directories=additional_directories,
-        )
-
-        return thread.run(
-            prompt,
-            images=images,
-            output_schema=output_schema,
-            timeout=timeout,
-            include_events=include_events,
-        )
-
-    async def ask_async(
-        self,
-        prompt: str,
-        *,
-        model: str | None = None,
-        reasoning_effort: ReasoningEffort | None = None,
-        sandbox: SandboxMode = "read-only",
-        cwd: str | Path | None = None,
-        skip_git_repo_check: bool = True,
-        approval_policy: ApprovalPolicy | None = None,
-        network_access: bool | None = None,
-        web_search: WebSearchMode | None = None,
-        additional_directories: list[str | Path] | None = None,
-        images: list[str | Path] | None = None,
-        output_schema: dict[str, Any] | None = None,
-        timeout: float | None = 300,
-        include_events: bool = False,
-    ) -> TurnResult:
-        thread = self.start_thread(
-            model=model,
-            reasoning_effort=reasoning_effort,
-            sandbox=sandbox,
-            cwd=cwd,
-            skip_git_repo_check=skip_git_repo_check,
-            approval_policy=approval_policy,
-            network_access=network_access,
-            web_search=web_search,
-            additional_directories=additional_directories,
-        )
-        return await thread.run_async(
-            prompt,
-            images=images,
-            output_schema=output_schema,
-            timeout=timeout,
-            include_events=include_events,
-        )
+        return CodexThread(client=self, options=options)
