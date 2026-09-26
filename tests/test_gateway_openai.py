@@ -1,8 +1,20 @@
 """Drive the OpenAI endpoints with the official openai SDK against fake Codex."""
 
+import importlib.util
 import json
 import os
 import unittest
+
+# The gateway tests need the (dev-only) openai SDK and pydantic; the release
+# workflow installs only requirements-release.txt, so skip cleanly there
+# instead of failing to collect this module.
+if (
+    importlib.util.find_spec("openai") is None
+    or importlib.util.find_spec("pydantic") is None
+):
+    raise unittest.SkipTest(
+        "openai and pydantic are not installed; skipping gateway tests."
+    )
 
 import openai
 from gateway_support import GatewayTestCase

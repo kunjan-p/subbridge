@@ -1,7 +1,14 @@
 """Drive POST /v1/messages with the official anthropic SDK against fake Claude Code."""
 
+import importlib.util
 import os
 import unittest
+
+# The gateway tests need the (dev-only) anthropic SDK; the release workflow
+# installs only requirements-release.txt, so skip cleanly there instead of
+# failing to collect this module.
+if importlib.util.find_spec("anthropic") is None:
+    raise unittest.SkipTest("anthropic is not installed; skipping gateway tests.")
 
 import anthropic
 from gateway_support import GatewayTestCase

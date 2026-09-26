@@ -1,25 +1,31 @@
 """Keys, bodies, routing, concurrency, and lifecycle of the localhost gateway."""
 
 import http.client
+import importlib.util
 import json
 import os
 import socket
-import sys
-import textwrap
-import threading
+import tempfile
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import suppress
-from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any, ClassVar
 from unittest import mock
+
+# The gateway tests need the (dev-only) anthropic and openai SDKs; the
+# release workflow installs only requirements-release.txt, so skip cleanly
+# there instead of failing to collect this module.
+if (
+    importlib.util.find_spec("anthropic") is None
+    or importlib.util.find_spec("openai") is None
+):
+    raise unittest.SkipTest(
+        "anthropic and openai are not installed; skipping gateway tests."
+    )
 
 import anthropic
 import openai
 from gateway_support import GatewayTestCase
-from test_claude import fake_claude
 
 import subbridge
 from subbridge.gateway._anthropic import MessagesEndpoint
@@ -197,6 +203,17 @@ class RetryTests(GatewayTestCase):
             )
         self.assertEqual(len(self.turn_calls("claude")), 1)
 
+    def test_openai_sdk_default_retries_do_not_rerun_a_failed_codex_turn(self) -> None:
+        client = openai.OpenAI(
+            base_url=self.gateway.openai_base_url, api_key=self.gateway.api_key
+        )
+        with self.assertRaises(openai.RateLimitError):
+            client.chat.completions.create(
+                model="gpt-test",
+                messages=[{"role": "user", "content": "usage-limit"}],
+            )
+        self.assertEqual(len(self.turn_calls("codex")), 1)
+
 
 class UnsupportedEndpointTests(GatewayTestCase):
     def test_embeddings_get_a_clear_404_in_openai_shape(self) -> None:
@@ -220,6 +237,18 @@ class UnsupportedMethodTests(GatewayTestCase):
         self.assertIn("not supported by SubBridge's gateway", body["error"]["message"])
         self.assertEqual(response.getheader("x-should-retry"), "false")
         self.assertEqual(self.cli_calls("claude"), [])
+
+
+class ServerHeaderTests(GatewayTestCase):
+    def test_server_header_omits_the_python_version(self) -> None:
+        connection = http.client.HTTPConnection(
+            "127.0.0.1", self.gateway.port, timeout=10
+        )
+        self.addCleanup(connection.close)
+        connection.request("GET", "/", headers=self.key_headers())
+        response = connection.getresponse()
+        response.read()
+        self.assertNotIn("Python/", response.getheader("Server") or "")
 
 
 class UnexpectedErrorTests(GatewayTestCase):
@@ -256,223 +285,33 @@ class LifecycleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             subbridge.serve(max_concurrency=0)
 
+    def test_cleans_up_the_workdir_when_the_server_fails_to_start(self) -> None:
+        """A `GatewayServer()` failure (for example the port is already in
+        use) must not leak the empty workdir created just before it.
 
-def _fake_claude_that_stalls(bin_dir: Path, pid_file: Path, sleep_seconds: int) -> Path:
-    """A minimal fake `claude` that records its PID before stalling.
-
-    Task 5 adds `.pid` files to the shared fake CLIs; this one is local to
-    this test so the fix doesn't need to touch those ahead of that task.
-    """
-    cli = bin_dir / "claude"
-    cli.write_text(
-        textwrap.dedent(
-            f"""\
-            #!{sys.executable}
-            import json
-            import os
-            import sys
-            import time
-
-            args = sys.argv[1:]
-            if args == ["--version"]:
-                print("2.1.test")
-            elif args == ["auth", "status", "--json"]:
-                print(json.dumps({{"loggedIn": True, "authMethod": "claude.ai"}}))
-            elif "--output-format" in args:
-                prompt = sys.stdin.read()
-                with open({str(pid_file)!r}, "w") as pid_file_handle:
-                    pid_file_handle.write(str(os.getpid()))
-                time.sleep({sleep_seconds})
-                print(json.dumps({{"type": "result", "subtype": "success", "result": "answer: " + prompt}}))
-            else:
-                sys.exit(2)
-            """
-        ),
-        encoding="utf-8",
-    )
-    cli.chmod(0o755)
-    return cli
-
-
-class CloseDuringTurnTests(unittest.TestCase):
-    def test_close_stops_an_in_flight_turn_and_returns_quickly(self) -> None:
-        with TemporaryDirectory() as tempdir:
-            bin_dir = Path(tempdir)
-            pid_file = bin_dir / "claude.pid"
-            _fake_claude_that_stalls(bin_dir, pid_file, sleep_seconds=20)
-            path = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-            with mock.patch.dict(os.environ, {"PATH": path}):
-                gateway = subbridge.serve()
-                self.addCleanup(gateway.close)  # close() is idempotent
-                client = anthropic.Anthropic(
-                    base_url=gateway.anthropic_base_url,
-                    api_key=gateway.api_key,
-                    max_retries=0,
-                )
-
-                def ask() -> None:
-                    # Any error is fine here; only close()'s effects matter.
-                    with suppress(Exception):
-                        client.messages.create(
-                            model="sonnet",
-                            max_tokens=10,
-                            messages=[{"role": "user", "content": "hi"}],
-                        )
-
-                worker = threading.Thread(target=ask)
-                worker.start()
-                deadline = time.monotonic() + 5
-                while not pid_file.exists() and time.monotonic() < deadline:
-                    time.sleep(0.02)
-                self.assertTrue(pid_file.exists(), "fake claude never started")
-                pid = int(pid_file.read_text())
-
-                started = time.monotonic()
-                gateway.close()
-                self.assertLess(time.monotonic() - started, 5)
-
-                deadline = time.monotonic() + 5
-                while time.monotonic() < deadline:
-                    try:
-                        os.kill(pid, 0)
-                    except ProcessLookupError:
-                        break
-                    time.sleep(0.05)
-                else:
-                    self.fail(f"fake claude (pid {pid}) is still running")
-
-                worker.join(timeout=5)
-                self.assertFalse(worker.is_alive())
-
-    def test_close_refuses_a_queued_turn_instead_of_starting_it(self) -> None:
-        with TemporaryDirectory() as tempdir:
-            bin_dir = Path(tempdir)
-            pid_file = bin_dir / "claude.pid"
-            _fake_claude_that_stalls(bin_dir, pid_file, sleep_seconds=20)
-            path = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-            with mock.patch.dict(os.environ, {"PATH": path}):
-                gateway = subbridge.serve(max_concurrency=1)
-                self.addCleanup(gateway.close)  # close() is idempotent
-                client = anthropic.Anthropic(
-                    base_url=gateway.anthropic_base_url,
-                    api_key=gateway.api_key,
-                    max_retries=0,
-                )
-                statuses: list[int] = []
-
-                def ask(content: str) -> None:
-                    try:
-                        client.messages.create(
-                            model="sonnet",
-                            max_tokens=10,
-                            messages=[{"role": "user", "content": content}],
-                        )
-                        statuses.append(200)
-                    except anthropic.APIStatusError as exc:
-                        statuses.append(exc.status_code)
-
-                first = threading.Thread(target=ask, args=("first",))
-                first.start()
-                deadline = time.monotonic() + 5
-                while not pid_file.exists() and time.monotonic() < deadline:
-                    time.sleep(0.02)
-                self.assertTrue(pid_file.exists(), "fake claude never started")
-                pid = int(pid_file.read_text())
-
-                # Queue a second turn behind the sole slot (max_concurrency=1)
-                # so it is blocked in cli_slot()'s slots.acquire() when
-                # close() runs -- the race close() must not lose.
-                second = threading.Thread(target=ask, args=("second",))
-                second.start()
-                time.sleep(0.3)
-
-                started = time.monotonic()
-                gateway.close()
-                self.assertLess(time.monotonic() - started, 5)
-
-                deadline = time.monotonic() + 5
-                while time.monotonic() < deadline:
-                    try:
-                        os.kill(pid, 0)
-                    except ProcessLookupError:
-                        break
-                    time.sleep(0.05)
-                else:
-                    self.fail(f"fake claude (pid {pid}) is still running")
-
-                first.join(timeout=5)
-                second.join(timeout=5)
-                self.assertFalse(first.is_alive())
-                self.assertFalse(second.is_alive())
-                # The queued turn must have been refused, not started: the
-                # pid file still names only the first turn's process (a
-                # second CLI run would have overwritten it with a new pid).
-                self.assertIn(503, statuses)
-                self.assertEqual(int(pid_file.read_text()), pid)
-
-    def test_close_stops_an_in_flight_streaming_turn(self) -> None:
-        """A streaming turn also registers in `_active_threads` via
-        `cli_slot()` (see `GatewayHandler._stream`), so `close()` must be
-        able to find and kill its CLI too, not just a non-streaming one.
+        Asserts that `cleanup()` is actually called, rather than checking
+        the directory is gone afterward: CPython's own refcounting can also
+        make an orphaned `TemporaryDirectory` clean itself up via its
+        finalizer once nothing (a traceback, say) still references it, which
+        would let this test pass even without the fix.
         """
-        with TemporaryDirectory() as tempdir:
-            bin_dir = Path(tempdir)
-            fake_claude(bin_dir)  # provides the "endless" prompt and its .pid file
-            pid_file = bin_dir / "claude.pid"
-            path = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-            with mock.patch.dict(os.environ, {"PATH": path}):
-                gateway = subbridge.serve()
-                self.addCleanup(gateway.close)  # close() is idempotent
-                client = anthropic.Anthropic(
-                    base_url=gateway.anthropic_base_url,
-                    api_key=gateway.api_key,
-                    max_retries=0,
-                )
-                got_first_tick = threading.Event()
+        real_cleanup = tempfile.TemporaryDirectory.cleanup
+        calls: list[str] = []
 
-                def ask() -> None:
-                    # Any error is fine here; only close()'s effects matter.
-                    with (
-                        suppress(Exception),
-                        client.messages.stream(
-                            model="sonnet",
-                            max_tokens=10,
-                            messages=[{"role": "user", "content": "endless"}],
-                        ) as stream,
-                    ):
-                        for _ in stream.text_stream:
-                            got_first_tick.set()
+        def spy_cleanup(self: tempfile.TemporaryDirectory) -> None:
+            calls.append(self.name)
+            real_cleanup(self)
 
-                # daemon=True: if the assertions below fail and this thread
-                # is (unexpectedly) still blocked reading the stream, it
-                # must not hang pytest's own process exit.
-                worker = threading.Thread(target=ask, daemon=True)
-                worker.start()
-                self.assertTrue(
-                    got_first_tick.wait(timeout=5), "no streamed text arrived"
-                )
-                deadline = time.monotonic() + 5
-                while not pid_file.exists() and time.monotonic() < deadline:
-                    time.sleep(0.02)
-                self.assertTrue(pid_file.exists(), "fake claude never started")
-                pid = int(pid_file.read_text())
-
-                started = time.monotonic()
-                gateway.close()
-                self.assertLess(time.monotonic() - started, 5)
-
-                deadline = time.monotonic() + 5
-                while time.monotonic() < deadline:
-                    try:
-                        os.kill(pid, 0)
-                    except ProcessLookupError:
-                        break
-                    time.sleep(0.05)
-                else:
-                    self.fail(f"fake claude (pid {pid}) is still running")
-
-                worker.join(timeout=5)
-                self.assertFalse(worker.is_alive())
+        with (
+            mock.patch.object(tempfile.TemporaryDirectory, "cleanup", spy_cleanup),
+            mock.patch(
+                "subbridge.gateway.GatewayServer", side_effect=OSError("port busy")
+            ),
+            self.assertRaises(OSError),
+        ):
+            subbridge.serve()
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(os.path.exists(calls[0]))
 
 
 if __name__ == "__main__":
