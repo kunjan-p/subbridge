@@ -24,13 +24,20 @@ class Gateway:
         self.api_key = "sb-local-" + secrets.token_urlsafe(24)
         # The CLIs run in an empty directory, like an API that has no files.
         self._workdir = tempfile.TemporaryDirectory(prefix="subbridge-gateway-")
-        self._server = GatewayServer(
-            port,
-            api_key=self.api_key,
-            max_concurrency=max_concurrency,
-            turn_timeout=timeout,
-            workdir=self._workdir.name,
-        )
+        try:
+            self._server = GatewayServer(
+                port,
+                api_key=self.api_key,
+                max_concurrency=max_concurrency,
+                turn_timeout=timeout,
+                workdir=self._workdir.name,
+            )
+        except Exception:
+            # For example the port is already in use: nothing to close yet,
+            # but the empty workdir was already created and would otherwise
+            # leak.
+            self._workdir.cleanup()
+            raise
         self.port: int = self._server.server_address[1]
         self._thread = threading.Thread(
             target=self._server.serve_forever, name="subbridge-gateway", daemon=True

@@ -46,6 +46,12 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(error.status, 500)
         self.assertNotIn("/private/secret", error.message)
 
+    def test_process_error_with_rate_limit_text_is_a_429(self) -> None:
+        error = from_exception(
+            CodexProcessError("Codex CLI exited with code 1: quota exceeded")
+        )
+        self.assertEqual(error.status, 429)
+
 
 class BodyTests(unittest.TestCase):
     def test_each_api_gets_its_own_error_shape(self) -> None:

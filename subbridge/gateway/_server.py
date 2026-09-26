@@ -95,6 +95,10 @@ class GatewayServer(ThreadingHTTPServer):
 class GatewayHandler(BaseHTTPRequestHandler):
     server: GatewayServer
     server_version = "SubBridgeGateway"
+    # Empty rather than the default "Python/X.Y.Z", so the Server header
+    # doesn't advertise the interpreter version to anything on this machine
+    # that can reach the gateway.
+    sys_version = ""
     # Bounds every blocking read on this connection, so a client that opens a
     # request and then never sends (or finishes) it cannot hold this thread
     # forever.

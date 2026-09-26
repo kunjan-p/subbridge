@@ -3,6 +3,7 @@
 import asyncio
 import json
 import sys
+import threading
 import time
 import unittest
 from dataclasses import asdict
@@ -90,6 +91,34 @@ class StreamLifecycleTests(unittest.TestCase):
                 )
                 events = list(client.start_thread().stream("x" * 1000000, timeout=5))
                 self.assertEqual(events[-1]["type"], terminal["type"])
+
+    def test_subbridge_process_attribute_is_restored_not_cleared(self):
+        """A thread's `subbridge_process` marker (see
+        `_lifecycle.stop_in_flight_turns`) might already be set to something
+        else before `sync()` runs on it; `sync()` must restore that value
+        once its own process is done, not blank it to `None`.
+        """
+        for provider, client_type, _, _ in self.providers:
+            with self.subTest(provider=provider):
+                terminal = (
+                    {"type": "result", "subtype": "success", "result": "ok"}
+                    if provider == "claude"
+                    else {"type": "turn.completed"}
+                )
+                client = self.client(
+                    provider,
+                    client_type,
+                    "sys.stdin.read()\n"
+                    + f"print({json.dumps(terminal)!r}, flush=True)",
+                )
+                sentinel = object()
+                thread = threading.current_thread()
+                thread.subbridge_process = sentinel
+                try:
+                    client.start_thread().run("hello", timeout=3)
+                    self.assertIs(thread.subbridge_process, sentinel)
+                finally:
+                    del thread.subbridge_process
 
     def test_stalled_input_obeys_deadline(self):
         for provider, client_type, process_error, _ in self.providers:
