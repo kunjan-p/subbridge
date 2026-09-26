@@ -156,6 +156,72 @@ class BodyTests(GatewayTestCase):
         self.assertIn("`model`", raised.exception.message)
         self.assertEqual(self.cli_calls("claude"), [])
 
+    def test_body_shorter_than_content_length_is_400(self) -> None:
+        sock = socket.create_connection(("127.0.0.1", self.gateway.port), timeout=10)
+        self.addCleanup(sock.close)
+        sock.sendall(
+            b"POST /v1/messages HTTP/1.1\r\nHost: x\r\n"
+            b"x-api-key: " + self.gateway.api_key.encode() + b"\r\n"
+            b"Content-Length: 1000\r\n\r\n"
+            b'{"partial": true'
+        )
+        # Half-close: the write side is done, so the server sees the
+        # client go away partway through the declared body, but the read
+        # side stays open to receive the reply.
+        sock.shutdown(socket.SHUT_WR)
+        response = b""
+        started = time.monotonic()
+        while time.monotonic() - started < 5:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            response += chunk
+        self.assertIn(b" 400 ", response)
+        self.assertIn(b"Content-Length bytes arrived", response)
+        self.assertEqual(self.cli_calls("claude"), [])
+
+
+class SlowBodyTests(GatewayTestCase):
+    def test_trickling_body_with_a_valid_key_times_out_instead_of_hanging(
+        self,
+    ) -> None:
+        with mock.patch("subbridge.gateway._server._HANDLER_TIMEOUT", 0.5):
+            sock = socket.create_connection(
+                ("127.0.0.1", self.gateway.port), timeout=10
+            )
+            self.addCleanup(sock.close)
+            sock.sendall(
+                b"POST /v1/messages HTTP/1.1\r\nHost: x\r\n"
+                b"x-api-key: " + self.gateway.api_key.encode() + b"\r\n"
+                b"Content-Length: 1000000\r\n\r\n"
+            )
+            sock.settimeout(0.05)
+            started = time.monotonic()
+            # Trickle a few bytes, far slower than the patched 0.5s
+            # deadline, then stop sending altogether and just wait for a
+            # reply -- unlike KeyTests' trickle tests, this exercises the
+            # body-read deadline itself (a valid key skips straight past
+            # the pre-body key check), so it must be the one to give up,
+            # not the client outlasting it.
+            for _ in range(3):
+                sock.sendall(b"a")
+                time.sleep(0.05)
+            reply = b""
+            while time.monotonic() - started < 3:
+                try:
+                    chunk = sock.recv(4096)
+                except TimeoutError:
+                    continue
+                if not chunk:
+                    break
+                reply += chunk
+            self.assertLess(time.monotonic() - started, 3)
+            self.assertIn(b"408", reply)
+            self.assertEqual(self.cli_calls("claude"), [])
+        closed_at = time.monotonic()
+        self.gateway.close()
+        self.assertLess(time.monotonic() - closed_at, 3)
+
 
 class ConcurrencyTests(GatewayTestCase):
     gateway_options: ClassVar[dict[str, Any]] = {"max_concurrency": 1, "timeout": 30}

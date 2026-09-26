@@ -210,6 +210,38 @@ class ProxyWarningTests(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
 
 
+class SignalRaceTests(unittest.TestCase):
+    """SIGINT-ignore must be installed before `Popen()` runs, not only
+    around `proc.wait()` afterward, or a signal in that gap could kill
+    `subbridge run` itself and orphan the child (round 2 fix for the same
+    race `SignalTests` below covers)."""
+
+    def test_sigint_is_already_ignored_when_popen_is_called(self) -> None:
+        sigint_at_popen_time = []
+
+        def fake_popen(*args, **kwargs):
+            sigint_at_popen_time.append(signal.getsignal(signal.SIGINT))
+            raise FileNotFoundError()
+
+        previous = signal.getsignal(signal.SIGINT)
+        with (
+            mock.patch("subprocess.Popen", side_effect=fake_popen),
+            mock.patch("sys.stderr", io.StringIO()),
+        ):
+            exit_code = cli.main(["run", "--", "does-not-matter"])
+        self.assertEqual(exit_code, 127)
+        self.assertEqual(len(sigint_at_popen_time), 1)
+        handler = sigint_at_popen_time[0]
+        # A Python-level handler, not `signal.SIG_DFL` (would kill us) or
+        # `signal.SIG_IGN` (would leave the child ignoring SIGINT too,
+        # since that disposition -- unlike a Python-level handler --
+        # survives exec()).
+        self.assertTrue(callable(handler))
+        self.assertNotIn(handler, (signal.SIG_DFL, signal.default_int_handler))
+        # Restored afterward too, even though Popen() itself failed.
+        self.assertEqual(signal.getsignal(signal.SIGINT), previous)
+
+
 @unittest.skipUnless(os.name == "posix", "process groups and SIGTERM are POSIX-only")
 class SignalTests(unittest.TestCase):
     """`subbridge run` must let its child handle Ctrl+C, not kill it (round 1 fix)."""
@@ -262,6 +294,28 @@ class SignalTests(unittest.TestCase):
         finally:
             if proc.poll() is None:
                 proc.kill()
+                proc.wait()
+
+    def test_run_lets_a_child_with_no_handler_of_its_own_die_from_sigint(self) -> None:
+        """Regression for I1: a plain `signal.SIG_IGN` installed before
+        `Popen()` would survive `exec()` into the child, leaving a child
+        with no SIGINT handler of its own -- like `sleep` -- ignoring
+        Ctrl+C outright instead of dying from it, as it would with no
+        `subbridge run` in front of it at all.
+        """
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "subbridge.cli", "run", "--", "sleep", "5"],
+            start_new_session=True,
+        )
+        try:
+            time.sleep(0.3)
+            started = time.monotonic()
+            os.killpg(proc.pid, signal.SIGINT)
+            self.assertEqual(proc.wait(timeout=10), 130)
+            self.assertLess(time.monotonic() - started, 3)
+        finally:
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
                 proc.wait()
 
 

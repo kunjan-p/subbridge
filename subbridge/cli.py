@@ -150,44 +150,85 @@ def _run(args: argparse.Namespace) -> int:
     try:
         with gateway:
             env = {**os.environ, **client_environment(gateway)}
-            try:
-                proc = subprocess.Popen(command, env=env)
-            except FileNotFoundError:
-                print(
-                    f"subbridge run: command not found: {command[0]}", file=sys.stderr
-                )
-                return 127
-            except PermissionError:
-                print(
-                    f"subbridge run: permission denied: {command[0]}", file=sys.stderr
-                )
-                return 126
-            with _yield_interrupts_to_child(proc):
-                code = proc.wait()
+            with _yield_interrupts_to_child() as child:
+                try:
+                    child.proc = subprocess.Popen(command, env=env)
+                except FileNotFoundError:
+                    print(
+                        f"subbridge run: command not found: {command[0]}",
+                        file=sys.stderr,
+                    )
+                    return 127
+                except PermissionError:
+                    print(
+                        f"subbridge run: permission denied: {command[0]}",
+                        file=sys.stderr,
+                    )
+                    return 126
+                if child.pending_term:
+                    # A SIGTERM arrived before the child existed to forward
+                    # it to; catch up on it now instead of leaving it
+                    # dropped and `wait()` below stuck until Ctrl+C.
+                    child.proc.send_signal(signal.SIGTERM)
+                code = child.proc.wait()
     except KeyboardInterrupt:
         return 130
     return code if code >= 0 else 128 - code
 
 
-@contextmanager
-def _yield_interrupts_to_child(proc: subprocess.Popen) -> Generator[None, None, None]:
-    """While `proc` runs, let it handle Ctrl+C itself instead of us killing it.
+class _ChildSlot:
+    """Holds the child `Popen` once `Popen()` returns it.
 
-    A terminal's Ctrl+C reaches `proc` directly too, since it shares our
-    process group by default, so we ignore SIGINT ourselves here and just
-    wait for `proc` to act on its own copy and exit, then return its real
-    exit code. On POSIX, also forward SIGTERM to `proc`, so `kill` on this
-    process (from another terminal, say) doesn't orphan `proc` or skip the
-    gateway's own cleanup in `with gateway:`.
+    Starts empty (`proc` is `None`) so `_yield_interrupts_to_child()` can
+    install its SIGTERM handler *before* the child exists, and the handler
+    still has something to check. `pending_term` lets a SIGTERM that
+    arrives in that gap be forwarded once the child does exist, instead of
+    being silently dropped.
     """
-    previous_int = signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+    proc: subprocess.Popen | None = None
+    pending_term: bool = False
+
+
+@contextmanager
+def _yield_interrupts_to_child() -> Generator[_ChildSlot, None, None]:
+    """Install signal handling before spawning the child, not just around its wait.
+
+    Installed before `subprocess.Popen()` even runs -- not only around
+    `proc.wait()` -- so a SIGTERM or SIGINT arriving in the gap between
+    deciding to run the child and `Popen()` actually returning cannot kill
+    this process outright: that would orphan the child once it exists and
+    skip the gateway's own cleanup in `with gateway:`. The caller sets
+    `.proc` on the yielded slot as soon as `Popen()` succeeds (and, if
+    `.pending_term` was set in the meantime, forwards the signal itself
+    then); the SIGTERM handler below forwards it directly once `.proc` is
+    already there, and just records it as pending otherwise.
+
+    A terminal's Ctrl+C reaches the child directly too, since it shares our
+    process group by default, so we install a no-op SIGINT handler of our
+    own (not `signal.SIG_IGN`: that disposition, unlike a Python-level
+    handler, survives `exec()` -- so a child spawned while it's in place
+    would inherit SIGINT *ignored* outright, rather than the default
+    behavior a child with no handler of its own is expected to have) and
+    just wait for the child to act on its own copy and exit, then return
+    its real exit code. On POSIX, also forward SIGTERM to the child once it
+    exists, so `kill` on this process (from another terminal, say) doesn't
+    orphan it or skip the gateway's own cleanup.
+    """
+    slot = _ChildSlot()
+    previous_int = signal.signal(signal.SIGINT, lambda signum, frame: None)
     previous_term = None
     if _POSIX:
-        previous_term = signal.signal(
-            signal.SIGTERM, lambda signum, frame: proc.send_signal(signal.SIGTERM)
-        )
+
+        def _forward_sigterm(signum, frame):
+            if slot.proc is not None:
+                slot.proc.send_signal(signal.SIGTERM)
+            else:
+                slot.pending_term = True
+
+        previous_term = signal.signal(signal.SIGTERM, _forward_sigterm)
     try:
-        yield
+        yield slot
     finally:
         signal.signal(signal.SIGINT, previous_int)
         if _POSIX:

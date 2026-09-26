@@ -6,6 +6,7 @@ import hmac
 import json
 import logging
 import threading
+import time
 from collections.abc import Iterable
 from contextlib import AbstractContextManager, closing, suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -26,6 +27,11 @@ from ._turns import Endpoint, Frame, TextStream, TurnRequest
 HOST = "127.0.0.1"
 MAX_BODY_BYTES = 10 * 1024 * 1024
 _HANDLER_TIMEOUT = 30.0
+# `rfile.read1()` makes at most one `recv()` call, so re-checking the
+# deadline every `_READ_CHUNK` bytes (rather than after one `read()` that
+# could loop internally forever) is what lets `_read_exact()` bound the
+# whole body, not just each individual network read.
+_READ_CHUNK = 64 * 1024
 
 ROUTES: dict[str, type[Endpoint]] = {
     "/v1/messages": MessagesEndpoint,
@@ -171,9 +177,65 @@ class GatewayHandler(BaseHTTPRequestHandler):
                 f"Request body is larger than {MAX_BODY_BYTES} bytes.",
                 code="request_too_large",
             )
-        body = self.rfile.read(length)
-        self._consumed = length
-        return body
+        return self._read_exact(length)
+
+    def _read_exact(self, length: int) -> bytes:
+        """Read exactly `length` bytes, bounded by one overall deadline.
+
+        `self.rfile.read(length)` only has `self.timeout` bound each
+        individual `recv()` it issues, not the read as a whole, so a client
+        sending one byte every `_HANDLER_TIMEOUT - epsilon` seconds could
+        hold this thread here indefinitely. This instead re-sets the socket
+        timeout to what's left of one overall deadline before every
+        `read1()` call (at most one `recv()` each, like
+        `drain_leftover_body()`), so the deadline is checked between every
+        network read, not just once per call. Like `drain_leftover_body()`,
+        it also restores the connection's previous timeout before
+        returning (successfully or not), so a near-zero leftover budget
+        from this read doesn't leak into the response write, an SSE
+        stream, or the next keep-alive request on this connection.
+        """
+        chunks: list[bytes] = []
+        remaining = length
+        deadline = time.monotonic() + _HANDLER_TIMEOUT
+        previous_timeout = self.connection.gettimeout()
+        try:
+            while remaining > 0:
+                budget = deadline - time.monotonic()
+                if budget <= 0:
+                    raise self._body_timeout()
+                self.connection.settimeout(budget)
+                try:
+                    chunk = self.rfile.read1(min(remaining, _READ_CHUNK))
+                except TimeoutError:
+                    # A `read1()` that times out here always means our own
+                    # deadline (not just this one recv) has elapsed, since
+                    # its timeout above was set to exactly what's left of
+                    # it. Raise straight from here instead of looping back
+                    # to check that again: `self.rfile` refuses every read
+                    # after the first timeout with a plain `OSError`
+                    # (Python's `SocketIO` remembers it once timed out),
+                    # which `_dispatch()` would swallow with no reply at
+                    # all rather than see as this `GatewayError`.
+                    raise self._body_timeout() from None
+                if not chunk:
+                    raise GatewayError(
+                        400,
+                        "Request body ended before Content-Length bytes arrived.",
+                    )
+                chunks.append(chunk)
+                remaining -= len(chunk)
+                self._consumed += len(chunk)
+            return b"".join(chunks)
+        finally:
+            with suppress(OSError):
+                self.connection.settimeout(previous_timeout)
+
+    def _body_timeout(self) -> GatewayError:
+        self.close_connection = True
+        return GatewayError(
+            408, "Timed out waiting for the request body.", code="request_timeout"
+        )
 
     def _check_key(self) -> None:
         bearer = self.headers.get("Authorization", "")
