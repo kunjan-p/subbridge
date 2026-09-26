@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from .models import ProviderName, StreamEvent, Usage
+from ._models import ProviderName, StreamEvent, Usage
 
 
 def normalize_event(

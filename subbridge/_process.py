@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import signal
 import subprocess
@@ -12,7 +11,6 @@ from queue import Empty, Full, Queue
 from threading import Event, Thread
 from typing import Any, Self
 
-ASYNC_STREAM_LINE_LIMIT = 16 * 1024 * 1024
 SYNC_STREAM_LINE_LIMIT = 16 * 1024 * 1024
 
 
@@ -171,13 +169,6 @@ def describe_turn_failure(provider: str, error: str, context: str = "") -> str:
     return f"{hint}\n\n{provider} said: {error}" if hint else error
 
 
-def validate_thread_id(thread_id: str) -> str:
-    """Reject IDs the CLI would parse as flags (for example ``--last``)."""
-    if not isinstance(thread_id, str) or not thread_id or thread_id.startswith("-"):
-        raise ValueError(f"Invalid thread ID: {thread_id!r}")
-    return thread_id
-
-
 def process_group_options() -> dict[str, Any]:
     """Start a separate POSIX process group so cancellation can stop children."""
     if os.name == "posix":
@@ -208,28 +199,6 @@ def terminate_process_tree(process: subprocess.Popen[Any]) -> None:
             process.kill()
     with suppress(OSError):
         process.wait(timeout=5)
-
-
-async def terminate_async_process_tree(process: asyncio.subprocess.Process) -> None:
-    if os.name == "posix":
-        with suppress(ProcessLookupError, PermissionError):
-            os.killpg(process.pid, signal.SIGKILL)
-    elif process.returncode is not None:
-        return
-    elif os.name == "nt":
-        with suppress(OSError, subprocess.SubprocessError):
-            await asyncio.to_thread(
-                subprocess.run,
-                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                capture_output=True,
-                check=False,
-                timeout=5,
-            )
-    if process.returncode is None:
-        with suppress(ProcessLookupError):
-            process.kill()
-    with suppress(ProcessLookupError):
-        await process.wait()
 
 
 def process_error_message(

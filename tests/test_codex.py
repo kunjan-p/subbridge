@@ -1,4 +1,3 @@
-import asyncio
 import os
 import textwrap
 import unittest
@@ -6,8 +5,25 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
-from subbridge import CodexClient
-from subbridge.errors import CodexProcessError, CodexTurnError, CodexWrongAuthModeError
+from subbridge._codex import CodexClient
+from subbridge._codex_thread import CodexThread, ThreadOptions, _schema_file
+from subbridge._errors import (
+    CodexProcessError,
+    CodexTurnError,
+    CodexWrongAuthModeError,
+)
+from subbridge._models import TurnResult
+
+
+def run_turn(
+    client: CodexClient,
+    prompt: str,
+    *,
+    model: str | None = None,
+    timeout: float | None = 300,
+) -> TurnResult:
+    """Exercise a turn the way the gateway does: a fresh thread, then run()."""
+    return client.start_thread(model=model).run(prompt, timeout=timeout)
 
 
 def fake_codex(tmp_path: Path, status: str = "Logged in using ChatGPT") -> Path:
@@ -111,16 +127,9 @@ class CodexClientTests(unittest.TestCase):
         env = {"OPENAI_BASE_URL": "http://proxy.invalid", "PATH": "/bin"}
         self.assertNotIn("OPENAI_BASE_URL", CodexClient(env=env)._environment())
 
-    def test_resume_rejects_flag_like_thread_id(self) -> None:
+    def test_run_streams_usage(self) -> None:
         client = CodexClient(codex_path=str(fake_codex(self.tmp_path)))
-        for bad in ("--last", "-x", ""):
-            with self.assertRaises(ValueError):
-                client.resume_thread(bad)
-        self.assertEqual(client.resume_thread("thread-123").id, "thread-123")
-
-    def test_ask_streams_events_and_usage(self) -> None:
-        client = CodexClient(codex_path=str(fake_codex(self.tmp_path)))
-        result = client.ask("hello", model="gpt-test-small", include_events=True)
+        result = run_turn(client, "hello", model="gpt-test-small")
         self.assertEqual(result.text, "answer: hello")
         self.assertEqual(result.thread_id, "thread-123")
         self.assertIsNotNone(result.usage)
@@ -131,10 +140,6 @@ class CodexClientTests(unittest.TestCase):
         self.assertEqual(result.provider, "codex")
         self.assertEqual(result.model, "gpt-test-small")
         self.assertGreaterEqual(result.elapsed_seconds, 0)
-
-        private_result = client.ask("hello")
-        self.assertEqual(private_result.events, [])
-        self.assertEqual(private_result.items, [])
 
     def test_status_hides_raw_auth_details_unless_requested(self) -> None:
         client = CodexClient(codex_path=str(fake_codex(self.tmp_path)))
@@ -155,45 +160,21 @@ class CodexClientTests(unittest.TestCase):
         self.assertEqual(capabilities.models[0].reasoning_efforts, ("low",))
         self.assertNotIn("instructions_template", repr(capabilities.models))
 
-    def test_async_ask_and_cancellation(self) -> None:
-        client = CodexClient(codex_path=str(fake_codex(self.tmp_path)))
-        result = asyncio.run(client.ask_async("hello", model="gpt-test-small"))
-        self.assertEqual(result.text, "answer: hello")
-        self.assertEqual(result.provider, "codex")
-        self.assertEqual(result.model, "gpt-test-small")
-        self.assertEqual(result.events, [])
-
-        async def normalized_events() -> list:
-            thread = client.start_thread()
-            return [event async for event in thread.stream_normalized_async("hello")]
-
-        normalized = asyncio.run(normalized_events())
-        self.assertEqual(
-            [event.kind for event in normalized],
-            ["thread_started", "message", "turn_completed"],
-        )
-        self.assertTrue(all(event.raw is None for event in normalized))
-
-        async def cancel_request() -> None:
-            thread = client.start_thread()
-            task = asyncio.create_task(thread.run_async("sleep", timeout=10))
-            await asyncio.sleep(0.05)
-            task.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await task
-
-        asyncio.run(cancel_request())
-
     def test_subscription_only_rejects_api_key_login(self) -> None:
         cli = fake_codex(self.tmp_path, status="Logged in using an API key")
         client = CodexClient(codex_path=str(cli))
         with self.assertRaises(CodexWrongAuthModeError):
-            client.ask("hello")
+            run_turn(client, "hello")
 
     def test_build_command_uses_current_json_flag_and_resume(self) -> None:
         client = CodexClient(codex_path=str(fake_codex(self.tmp_path)))
-        thread = client.resume_thread(
-            "thread-xyz", model="test-model", cwd=self.tmp_path
+        # `resume_thread()` is gone, but resuming an existing conversation
+        # remains a `CodexThread` capability: constructing one with a thread
+        # ID directly exercises the same `_build_command()` resume branch.
+        thread = CodexThread(
+            client=client,
+            thread_id="thread-xyz",
+            options=ThreadOptions(model="test-model", cwd=self.tmp_path),
         )
         command = thread._build_command()
         self.assertIn("--json", command)
@@ -204,17 +185,17 @@ class CodexClientTests(unittest.TestCase):
     def test_timeout_stops_the_cli(self) -> None:
         client = CodexClient(codex_path=str(fake_codex(self.tmp_path)))
         with self.assertRaisesRegex(CodexProcessError, "timed out"):
-            client.ask("sleep", timeout=0.05)
+            run_turn(client, "sleep", timeout=0.05)
 
     def test_protocol_and_plan_failures_are_explicit(self) -> None:
         client = CodexClient(codex_path=str(fake_codex(self.tmp_path)))
         with self.assertRaisesRegex(
             CodexTurnError, "unavailable on this account plan"
         ) as raised:
-            client.ask("plan-denied")
+            run_turn(client, "plan-denied")
         self.assertIn("not supported when using Codex", str(raised.exception))
         with self.assertRaisesRegex(Exception, "terminal turn.completed"):
-            client.ask("no-terminal")
+            run_turn(client, "no-terminal")
 
     def test_sync_stream_rejects_oversized_jsonl_event(self) -> None:
         client = CodexClient(codex_path=str(fake_codex(self.tmp_path)))
@@ -222,12 +203,18 @@ class CodexClientTests(unittest.TestCase):
             mock.patch("subbridge._stream.SYNC_STREAM_LINE_LIMIT", 1024),
             self.assertRaisesRegex(Exception, "larger than"),
         ):
-            client.ask("large-event")
+            run_turn(client, "large-event")
+
+    def test_schema_file_is_removed_after_use(self) -> None:
+        with _schema_file({"type": "object"}) as path:
+            self.assertIsNotNone(path)
+            self.assertTrue(Path(path).exists())
+        self.assertFalse(Path(path).exists())
 
     def test_process_diagnostics_are_redacted_by_default(self) -> None:
         client = CodexClient(codex_path=str(fake_codex(self.tmp_path)))
         with self.assertRaises(CodexProcessError) as raised:
-            client.ask("crash")
+            run_turn(client, "crash")
         self.assertNotIn("/private/sensitive", str(raised.exception))
 
         verbose_client = CodexClient(
@@ -235,7 +222,7 @@ class CodexClientTests(unittest.TestCase):
             include_raw_diagnostics=True,
         )
         with self.assertRaises(CodexProcessError) as verbose_raised:
-            verbose_client.ask("crash")
+            run_turn(verbose_client, "crash")
         self.assertIn("/private/sensitive", str(verbose_raised.exception))
 
 

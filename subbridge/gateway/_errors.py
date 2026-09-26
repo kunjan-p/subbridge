@@ -5,8 +5,7 @@ from __future__ import annotations
 import subprocess
 from typing import Any, Literal
 
-from .._process import failure_kind
-from ..errors import (
+from .._errors import (
     ClaudeNotAuthenticatedError,
     ClaudeNotInstalledError,
     ClaudeProcessError,
@@ -21,6 +20,7 @@ from ..errors import (
     CodexWrongAuthModeError,
     SubBridgeError,
 )
+from .._process import failure_kind
 
 ErrorStyle = Literal["anthropic", "openai"]
 

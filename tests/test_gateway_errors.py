@@ -1,7 +1,7 @@
 import subprocess
 import unittest
 
-from subbridge.errors import (
+from subbridge._errors import (
     ClaudeNotInstalledError,
     ClaudeProtocolError,
     ClaudeTurnError,

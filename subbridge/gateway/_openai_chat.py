@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Iterator
 from typing import Any
 
-from ..models import ProviderName, TurnResult, Usage
+from .._models import ProviderName, TurnResult, Usage
 from ._errors import ErrorStyle, GatewayError, error_body
 from ._transcript import (
     OPENAI_ROLES,

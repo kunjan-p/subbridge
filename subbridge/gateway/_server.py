@@ -12,10 +12,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import urlsplit
 
-from ..claude import ClaudeClient
-from ..codex import CodexClient
-from ..errors import SubBridgeError
-from ..models import ProviderName, TurnResult
+from .._claude import ClaudeClient
+from .._codex import CodexClient
+from .._errors import SubBridgeError
+from .._models import ProviderName, TurnResult
 from ._anthropic import MessagesEndpoint
 from ._errors import ErrorStyle, GatewayError, error_body, from_exception
 from ._lifecycle import TurnLifecycle, drain_leftover_body

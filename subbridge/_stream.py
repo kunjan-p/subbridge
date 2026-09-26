@@ -1,29 +1,17 @@
-"""JSONL transport shared by the synchronous and asynchronous provider threads."""
+"""JSONL transport shared by provider threads over one CLI invocation."""
 
 from __future__ import annotations
 
-import asyncio
 import json
 import subprocess
 import tempfile
 import threading
-import time
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from ._process import (
-    ASYNC_STREAM_LINE_LIMIT,
-    SYNC_STREAM_LINE_LIMIT,
-    StreamLineLimitExceeded,
-    SyncProcessIO,
-    describe_turn_failure,
-    process_error_message,
-    process_group_options,
-    terminate_async_process_tree,
-)
-from .errors import (
+from ._errors import (
     ClaudeProcessError,
     ClaudeProtocolError,
     ClaudeTurnError,
@@ -31,7 +19,15 @@ from .errors import (
     CodexProtocolError,
     CodexTurnError,
 )
-from .models import ProviderName
+from ._models import ProviderName
+from ._process import (
+    SYNC_STREAM_LINE_LIMIT,
+    StreamLineLimitExceeded,
+    SyncProcessIO,
+    describe_turn_failure,
+    process_error_message,
+    process_group_options,
+)
 
 
 class EventStream:
@@ -182,58 +178,3 @@ class EventStream:
                 self._finish(return_code, stderr.read())
             finally:
                 this_thread.subbridge_process = previous_process
-
-    async def async_(self, prompt: str) -> AsyncGenerator[dict[str, Any], None]:
-        with (
-            self._translate_errors(ASYNC_STREAM_LINE_LIMIT),
-            tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as stderr,
-        ):
-            process = await asyncio.create_subprocess_exec(
-                *self.command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=stderr,
-                env=self.env,
-                cwd=self.cwd,
-                limit=ASYNC_STREAM_LINE_LIMIT,
-                **process_group_options(),
-            )
-            deadline = None if self.timeout is None else time.monotonic() + self.timeout
-            try:
-                await self._send_prompt(process, prompt, deadline)
-                async for event in self._read_events(process, deadline):
-                    yield event
-                await asyncio.wait_for(process.wait(), timeout=_remaining(deadline))
-                stderr.seek(0)
-                self._finish(process.returncode or 0, stderr.read())
-            finally:
-                await terminate_async_process_tree(process)
-
-    async def _send_prompt(
-        self, process: asyncio.subprocess.Process, prompt: str, deadline: float | None
-    ) -> None:
-        assert process.stdin is not None
-        process.stdin.write(prompt.encode("utf-8"))
-        await asyncio.wait_for(process.stdin.drain(), timeout=_remaining(deadline))
-        process.stdin.close()
-
-    async def _read_events(
-        self, process: asyncio.subprocess.Process, deadline: float | None
-    ) -> AsyncGenerator[dict[str, Any], None]:
-        assert process.stdout is not None
-        while True:
-            try:
-                line = await asyncio.wait_for(
-                    process.stdout.readline(), timeout=_remaining(deadline)
-                )
-            except ValueError as exc:
-                raise StreamLineLimitExceeded() from exc
-            if not line:
-                return
-            yield self._decode(line)
-            if self.terminal:
-                return
-
-
-def _remaining(deadline: float | None) -> float | None:
-    return None if deadline is None else max(0.0, deadline - time.monotonic())

@@ -5,23 +5,20 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from ._process import describe_turn_failure
-from .errors import (
+from ._errors import (
     ClaudeProtocolError,
     ClaudeTurnError,
     CodexProtocolError,
     CodexTurnError,
 )
-from .events import normalize_event
-from .models import ProviderName, TurnResult
+from ._events import normalize_event
+from ._models import ProviderName, TurnResult
+from ._process import describe_turn_failure
 
 
 class TurnCollector:
-    def __init__(
-        self, provider: ProviderName, model: str | None, include_events: bool
-    ) -> None:
+    def __init__(self, provider: ProviderName, model: str | None) -> None:
         self.provider = provider
-        self.include_events = include_events
         self.started = time.monotonic()
         self.completed = False
         self.error: str | None = None
@@ -31,13 +28,6 @@ class TurnCollector:
 
     def add(self, event: dict[str, Any]) -> None:
         normalized = normalize_event(self.provider, event)
-        if self.include_events:
-            self.result.events.append(event)
-            if self.provider == "claude" and event.get("type") == "assistant":
-                self.result.items.append(event)
-            elif self.provider == "codex" and event.get("type") == "item.completed":
-                item = event.get("item")
-                self.result.items.append(item if isinstance(item, dict) else {})
         if normalized.kind == "message":
             if self.provider == "claude":
                 self.result.text += normalized.text or ""

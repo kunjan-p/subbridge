@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 
-from .claude import ClaudeClient
-from .codex import CodexClient
+from ._claude import ClaudeClient
+from ._codex import CodexClient
 
 
 def collect_doctor_report() -> dict[str, dict]:

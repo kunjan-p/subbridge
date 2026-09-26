@@ -1,22 +1,21 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import tempfile
-from collections.abc import AsyncGenerator, Generator
-from contextlib import aclosing, closing, contextmanager
+from collections.abc import Generator
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from ._errors import CodexNotInstalledError
+from ._events import normalize_event
+from ._models import StreamEvent, TurnResult
 from ._result import TurnCollector
 from ._stream import EventStream
-from .errors import CodexNotInstalledError
-from .events import normalize_event
-from .models import StreamEvent, TurnResult
 
 if TYPE_CHECKING:
-    from .codex import CodexClient
+    from ._codex import CodexClient
 
 
 SandboxMode = Literal[
@@ -167,49 +166,6 @@ class CodexThread:
                     "codex", event, include_raw=include_raw, thread_id=self.id
                 )
 
-    async def stream_async(
-        self,
-        prompt: str,
-        *,
-        images: list[str | Path] | None = None,
-        output_schema: dict[str, Any] | None = None,
-        timeout: float | None = 300,
-    ) -> AsyncGenerator[dict[str, Any], None]:
-        await asyncio.to_thread(self.client._validate_auth)
-        with _schema_file(output_schema) as schema_path:
-            transport = EventStream(
-                "codex",
-                self._build_command(schema_file=schema_path, images=images),
-                env=self.client._environment(),
-                cwd=self.options.cwd,
-                timeout=timeout,
-                include_raw_diagnostics=self.client.include_raw_diagnostics,
-            )
-            async with aclosing(transport.async_(prompt)) as events:
-                async for event in events:
-                    if event.get("type") == "thread.started":
-                        self.id = event.get("thread_id")
-                    yield event
-
-    async def stream_normalized_async(
-        self,
-        prompt: str,
-        *,
-        include_raw: bool = False,
-        images: list[str | Path] | None = None,
-        output_schema: dict[str, Any] | None = None,
-        timeout: float | None = 300,
-    ) -> AsyncGenerator[StreamEvent, None]:
-        async with aclosing(
-            self.stream_async(
-                prompt, images=images, output_schema=output_schema, timeout=timeout
-            )
-        ) as events:
-            async for event in events:
-                yield normalize_event(
-                    "codex", event, include_raw=include_raw, thread_id=self.id
-                )
-
     def run(
         self,
         prompt: str,
@@ -217,34 +173,14 @@ class CodexThread:
         images: list[str | Path] | None = None,
         output_schema: dict[str, Any] | None = None,
         timeout: float | None = 300,
-        include_events: bool = False,
     ) -> TurnResult:
-        collector = TurnCollector("codex", self.options.model, include_events)
+        collector = TurnCollector("codex", self.options.model)
         with closing(
             self.stream(
                 prompt, images=images, output_schema=output_schema, timeout=timeout
             )
         ) as events:
             for event in events:
-                collector.add(event)
-        return collector.finish(self.id)
-
-    async def run_async(
-        self,
-        prompt: str,
-        *,
-        images: list[str | Path] | None = None,
-        output_schema: dict[str, Any] | None = None,
-        timeout: float | None = 300,
-        include_events: bool = False,
-    ) -> TurnResult:
-        collector = TurnCollector("codex", self.options.model, include_events)
-        async with aclosing(
-            self.stream_async(
-                prompt, images=images, output_schema=output_schema, timeout=timeout
-            )
-        ) as events:
-            async for event in events:
                 collector.add(event)
         return collector.finish(self.id)
 
