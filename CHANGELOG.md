@@ -6,7 +6,7 @@ All notable changes to SubBridge are recorded here. The format follows [Keep a C
 
 ### Added
 
-- A local gateway for the official `anthropic` and `openai` Python SDKs, for prototyping on the subscription you already have and shipping with a real API key: `subbridge run -- <command>`, `subbridge serve`, and `subbridge.serve()`. It listens on `127.0.0.1` only, requires a key it generates at each start, and answers `POST /v1/messages` with Claude Code and `POST /v1/chat/completions` and `POST /v1/responses` with Codex, streaming included. Tools, images, and other unsupported parameters are rejected with a 400, and other endpoints with a 404. Tested with anthropic 1.8.0 and openai 3.19.2.
+- A local gateway for the official `anthropic` and `openai` Python SDKs: `subbridge run -- <command>`, `subbridge serve`, and `subbridge.serve()`. Prototype on the subscription your team already has, ship with a real API key. It listens on `127.0.0.1` only, requires a key it generates at each start, and answers `POST /v1/messages` with Claude Code and `POST /v1/chat/completions` and `POST /v1/responses` with Codex, streaming included, within what your plan and your organization's policy allow. Tools, images, and other unsupported parameters are rejected with a 400, and other endpoints with a 404. Tested with anthropic 1.8.0 and openai 3.19.2.
 
 ### Changed
 

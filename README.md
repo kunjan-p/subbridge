@@ -106,7 +106,7 @@ Claude Pro, Max, and Enterprise seats work through Claude Code's Claude.ai sign-
 
 ### Run a script unchanged
 
-The official SDKs read their endpoint and key from environment variables. `subbridge run` starts the gateway, sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_API_KEY` for one command, and stops the gateway when that command exits:
+Install the SDKs your script uses (`pip install anthropic openai`); SubBridge does not depend on them. The official SDKs read their endpoint and key from environment variables. `subbridge run` starts the gateway, sets `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `OPENAI_BASE_URL`, and `OPENAI_API_KEY` for one command, and stops the gateway when that command exits:
 
 ```bash
 subbridge run -- python app.py
@@ -115,35 +115,41 @@ subbridge run -- python app.py
 `app.py` contains no SubBridge code:
 
 ```python
+import os
+
 from anthropic import Anthropic
 from openai import OpenAI
 
 claude = Anthropic().messages.create(
-    model="sonnet",
+    model=os.environ.get("CLAUDE_MODEL", "sonnet"),
     max_tokens=500,
     messages=[{"role": "user", "content": "Name one prime number."}],
 )
 print(claude.content[0].text)
 
-codex = OpenAI().responses.create(model="gpt-6-luna", input="Name one prime number.")
+codex = OpenAI().responses.create(
+    model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"), input="Name one prime number."
+)
 print(codex.output_text)
 ```
 
-Ctrl+C and SIGTERM during `subbridge run` go to `app.py`, not to the gateway; `run` exits with `app.py`'s own exit code once it does. See `subbridge run --help` for the exit codes of the other outcomes, such as a command that is not found or a port already in use.
+Ctrl+C and SIGTERM (on macOS and Linux) during `subbridge run` go to `app.py`, not to the gateway; `run` exits with `app.py`'s own exit code once it does. See `subbridge run --help` for the exit codes of the other outcomes, such as a command that is not found or a port already in use.
 
 ### From prototype to production
 
 The same script, two commands:
 
 ```bash
-# Prototype: your signed-in CLIs answer through the local gateway.
+# Prototype: your signed-in CLIs answer through the local gateway. CLAUDE_MODEL and
+# OPENAI_MODEL are optional here; app.py's defaults work with the CLIs.
 subbridge run -- python app.py
 
-# Production: the real APIs answer, billed to your API keys.
-ANTHROPIC_API_KEY=sk-ant-... OPENAI_API_KEY=sk-... python app.py
+# Production: the real APIs answer, billed to your API keys. Set CLAUDE_MODEL and
+# OPENAI_MODEL to model IDs the APIs accept.
+ANTHROPIC_API_KEY=sk-ant-... OPENAI_API_KEY=sk-... CLAUDE_MODEL=claude-sonnet-4-5 OPENAI_MODEL=gpt-5 python app.py
 ```
 
-There is nothing to comment out. Check the model names: the gateway passes `model` to the CLI's `--model` flag as-is, so short names such as `sonnet` work in the prototype but not with the API. Use a name both accept, or read it from an environment variable as [`examples/official_sdks.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/official_sdks.py) does.
+There is nothing to comment out. Check the model names: the gateway passes `model` to the CLI's `--model` flag as-is, so short names such as `sonnet` work in the prototype but not with the API. `app.py` reads its model names from `CLAUDE_MODEL` and `OPENAI_MODEL`, the same pattern [`examples/official_sdks.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/official_sdks.py) uses, so set them to model IDs the real APIs accept when you switch.
 
 ### Other tools, and Python code
 
@@ -176,11 +182,11 @@ Pass `gw.openai_base_url`, which ends in `/v1`, to `openai.OpenAI(base_url=..., 
 | --- | --- | --- | --- |
 | `POST /v1/messages` | Claude Code | `messages.create`, `messages.stream`, `stream=True`, `system`, text content | `tools`, `tool_choice`, `mcp_servers`, `container`, image and document blocks, structured output (`output_config.format`) |
 | `POST /v1/chat/completions` | Codex | `chat.completions.create`, `stream=True`, `chat.completions.parse`, `response_format` with `json_schema`, `system` and `developer` messages | `tools`, `tool_choice`, `functions`, `function_call`, `audio`, `n` above 1, image and audio parts, `response_format` of type `json_object` |
-| `POST /v1/responses` | Codex | `responses.create`, `responses.stream`, `stream=True`, `responses.parse`, `text.format` with `json_schema`, `instructions`, text or message `input` | `tools`, `tool_choice`, `previous_response_id`, `conversation`, `prompt`, `background`, image and file inputs |
+| `POST /v1/responses` | Codex | `responses.create`, `responses.stream`, `stream=True`, `responses.parse`, `text.format` with `json_schema`, `instructions`, text or message `input` | `tools`, `tool_choice`, `previous_response_id`, `conversation`, `prompt`, `background`, image and file inputs, `text.format` of type `json_object` |
 
 Each request runs one CLI turn with SubBridge's read-only defaults. The whole conversation in the request is sent to the CLI as one transcript, and the gateway keeps nothing between requests. Parameters not in the table, such as `temperature`, `top_p`, `max_tokens`, `stop`, `seed`, `metadata`, and `user`, are accepted and ignored.
 
-A non-streamed reply carries only the agent's final answer. Errors come back in each API's own error shape, so the SDKs raise their usual exceptions: a usage or rate limit is a 429, a model the CLI does not know is a 404, a model your plan lacks is a 403, a CLI that is missing or signed out is a 503, a timeout is a 504, and other CLI failures are a 502. Every error response carries `x-should-retry: false`, so the SDKs do not start the CLI again for a call that already failed.
+A non-streamed reply carries only the agent's final answer. Errors come back in each API's own error shape, so the SDKs raise their usual exceptions: a usage or rate limit is a 429, a model the CLI does not know is a 404, a model your plan lacks is a 403, a CLI that is missing or signed out, or no free CLI slot, is a 503, a timeout is a 504, and other CLI failures are a 502. Every JSON error response carries `x-should-retry: false`, so the SDKs do not start the CLI again for a call that already failed.
 
 ### What the gateway can't do
 
@@ -192,7 +198,7 @@ A non-streamed reply carries only the agent's final answer. Errors come back in 
 
 ### Gateway security
 
-The gateway listens on `127.0.0.1` only, with no option to listen on other addresses, and sends no CORS headers. Every request must carry the key the gateway generated, as `x-api-key` or `Authorization: Bearer`; a missing or wrong key gets a 401 before any CLI starts. Software running as your user can read the key, for example from the environment of a `subbridge run` command, as it can any local credential. The CLIs run in an empty temporary directory, not your project folder, so a gateway request can't read your files.
+The gateway listens on `127.0.0.1` only, with no option to listen on other addresses, and sends no CORS headers. Every request must carry the key the gateway generated, as `x-api-key` or `Authorization: Bearer`; a missing or wrong key gets a 401 before any CLI starts. Software running as your user can read the key, for example from the environment of a `subbridge run` command, as it can any local credential. The CLIs start in an empty temporary directory rather than the directory you ran the command from. That is only a starting point: Codex's read-only sandbox can still read files elsewhere on your machine, and Claude Code follows your own permission settings. Don't send untrusted text through the gateway on a machine with files you wouldn't show the model.
 
 ## `subbridge doctor`
 
@@ -234,7 +240,7 @@ Runnable scripts live in [`examples/`](https://github.com/kunjan-p/subbridge/tre
 | [`streaming.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/streaming.py), [`claude_streaming.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/claude_streaming.py) | Raw event streaming |
 | [`async_clients.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/async_clients.py) | Both providers concurrently with asyncio |
 | [`hybrid.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/hybrid.py) | A review loop: Claude drafts code, Codex reviews it, Claude revises, Codex checks the revision |
-| [`official_sdks.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/official_sdks.py) | The official `anthropic` and `openai` SDKs through the gateway: `subbridge run -- python examples/official_sdks.py` |
+| [`official_sdks.py`](https://github.com/kunjan-p/subbridge/blob/main/examples/official_sdks.py) | The official `anthropic` and `openai` SDKs through the gateway (`pip install anthropic openai` first): `subbridge run -- python examples/official_sdks.py` |
 
 From a clone of this repository:
 
