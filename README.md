@@ -142,6 +142,8 @@ Ctrl+C and SIGTERM (on macOS and Linux) during `subbridge run` go to `app.py`, n
 `subbridge run` needs no changes to your script at all, but it does mean running a wrapper command instead of your script directly. If you would rather add one line to the script itself, call `subbridge.use_subscription()` before creating any SDK client:
 
 ```python
+import os
+
 import subbridge
 
 subbridge.use_subscription()
@@ -150,15 +152,17 @@ from anthropic import Anthropic
 from openai import OpenAI
 
 claude = Anthropic().messages.create(
-    model="sonnet",
+    model=os.environ.get("CLAUDE_MODEL", "sonnet"),
     max_tokens=500,
     messages=[{"role": "user", "content": "Name one prime number."}],
 )
-codex = OpenAI().responses.create(model="gpt-6-luna", input="Name one prime number.")
+codex = OpenAI().responses.create(
+    model=os.environ.get("OPENAI_MODEL", "gpt-6-luna"), input="Name one prime number."
+)
 print(claude.content[0].text, codex.output_text)
 ```
 
-Call `use_subscription()` before constructing `Anthropic()` or `OpenAI()`, not after: both SDKs read their base URL and key once, at construction, from the environment variables it sets. In production, delete the `subbridge.use_subscription()` line and set a real `ANTHROPIC_API_KEY` (and/or `OPENAI_API_KEY`) instead; the rest of the script is unchanged.
+Call `use_subscription()` before constructing `Anthropic()` or `OpenAI()`, not after: both SDKs read their base URL and key once, at construction, from the environment variables it sets. It is one gateway for the whole process, not one per caller, so closing it, including by leaving a `with subbridge.use_subscription():` block, closes it for any other code in the process still relying on it too. In production, delete the `subbridge.use_subscription()` line, set a real `ANTHROPIC_API_KEY` (and/or `OPENAI_API_KEY`), and set `CLAUDE_MODEL`/`OPENAI_MODEL` to model IDs the real APIs accept, the same as [Run a script unchanged](#run-a-script-unchanged) above; the rest of the script is unchanged.
 
 ### From prototype to production
 

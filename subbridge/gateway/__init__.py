@@ -97,33 +97,51 @@ def serve(
 
 
 class _EnvGateway(Gateway):
-    """A `Gateway` that also restores the four SDK env vars it set, once, on close."""
+    """A `Gateway` that also restores the four SDK env vars it set, once, on close.
+
+    The singleton hand-off and env restore happen first, under
+    `_use_subscription_lock`, *before* the (possibly slow, up to several
+    seconds while an in-flight CLI turn is stopped) real shutdown in
+    `super().close()`. A `use_subscription()` call racing `close()` must
+    never be handed back a gateway that has already committed to closing
+    (I1): once `close()` has cleared the singleton under the lock, a
+    racing `use_subscription()` finds it gone and starts a fresh one,
+    rather than waiting out the slow shutdown only to get back a gateway
+    that is (or is about to be) `_closed`.
+    """
 
     _previous_env: dict[str, str | None]
+    # A separate flag from the base class's `_closed`: that one gates the
+    # real shutdown in `Gateway.close()` (so it must stay False until this
+    # method actually calls `super().close()`), while this one guards the
+    # env-restore/singleton bookkeeping so a second `close()` call -- even
+    # one racing this one on another thread -- cannot run it twice.
+    _env_restored: bool = False
 
     def close(self) -> None:
-        already_closed = self._closed
+        global _use_subscription_singleton
+        with _use_subscription_lock:
+            if not self._env_restored:
+                self._env_restored = True
+                if _use_subscription_singleton is self:
+                    _use_subscription_singleton = None
+                # I2: restore a variable only if it still holds what this
+                # call set; leave one the caller reassigned in between
+                # alone, rather than overwriting it back.
+                current = client_environment(self)
+                for name, original in self._previous_env.items():
+                    if os.environ.get(name) != current.get(name):
+                        continue
+                    if original is None:
+                        os.environ.pop(name, None)
+                    else:
+                        os.environ[name] = original
         super().close()
-        if already_closed:
-            return
-        for name, value in self._previous_env.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
-        _clear_use_subscription_singleton(self)
 
 
 _use_subscription_lock = threading.Lock()
 _use_subscription_singleton: Gateway | None = None
 _use_subscription_atexit_registered = False
-
-
-def _clear_use_subscription_singleton(gateway: Gateway) -> None:
-    global _use_subscription_singleton
-    with _use_subscription_lock:
-        if _use_subscription_singleton is gateway:
-            _use_subscription_singleton = None
 
 
 def _close_use_subscription_at_exit() -> None:
@@ -134,7 +152,7 @@ def _close_use_subscription_at_exit() -> None:
 
 
 def use_subscription(
-    *, port: int = 0, max_concurrency: int = 4, timeout: float = 300
+    *, port: int = 0, max_concurrency: int = 4, timeout: float | None = 300
 ) -> Gateway:
     """Point the official Anthropic and OpenAI SDKs at your signed-in CLIs.
 
@@ -147,15 +165,32 @@ def use_subscription(
 
     This changes the whole process's environment, not just the calling
     thread or module, so any code, and any subprocess started afterwards
-    that inherits the environment, picks up the gateway too.
+    that inherits the environment, picks up the gateway too. The gateway
+    itself is shared the same way: it is one gateway for the whole
+    process, not one per caller, so closing it -- with `close()`, or by
+    leaving a `with subbridge.use_subscription():` block -- closes it for
+    every other piece of code in the process that is still relying on it,
+    not just the caller that closed it.
 
     Idempotent and thread-safe: while a gateway from an earlier call is
-    still running, a later call returns that same `Gateway` and changes
-    nothing, even if given different arguments. Closing the returned
-    `Gateway` -- with `close()`, a `with` block, or automatically at
-    interpreter exit -- restores the four variables to whatever they held
-    before this call (removing any that were unset), and the next call
-    starts a fresh gateway with a new key.
+    still running, a later call (even from another thread, even with
+    different arguments) returns that same `Gateway` and changes nothing.
+    Closing the returned `Gateway` restores the four variables, but only
+    the ones still holding what this call set: a variable your own code
+    reassigned in between (``os.environ["OPENAI_API_KEY"] = "sk-..."``,
+    say) is left as your code set it, not overwritten back. The next
+    `use_subscription()` call after a close starts a fresh gateway with a
+    new key.
+
+    Registers an `atexit` cleanup once, the first time this is called, so
+    the gateway stops (and any in-flight CLI turn is killed) at normal
+    interpreter exit even if nothing ever calls `close()`. `atexit` runs
+    callbacks in reverse registration order, so anything that registered
+    its own cleanup before this function was first called runs *after*
+    this one has already closed the gateway; and some process exits (a
+    hard kill, or a daemon thread -- like the gateway's own server thread
+    -- still running when the interpreter would otherwise exit) skip
+    `atexit` entirely, so this is a safety net, not a guarantee.
 
     In prototype code::
 
