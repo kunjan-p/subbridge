@@ -16,7 +16,7 @@ python -m pip install -e ".[dev]"
 
 ## Run the checks
 
-CI runs these on every pull request, on Python 3.11 through 3.14:
+CI runs these on every pull request, on Python 3.11:
 
 ```bash
 python -m pytest
