@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools==84.0.0"]
+requires = ["setuptools==84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -30,9 +30,9 @@ subbridge = ["py.typed"]
 [project.optional-dependencies]
 dev = [
     "pytest==9.1.1",
-    "ruff==0.16.9",
-    "anthropic==1.8.0",
-    "openai==3.19.2",
+    "ruff==0.17.2",
+    "anthropic==2.3.0",
+    "openai==3.37.0",
 ]
 
 [project.urls]
